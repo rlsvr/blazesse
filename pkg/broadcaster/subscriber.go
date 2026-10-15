@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rlsvr/blazesse/pkg/frame"
-	"github.com/rlsvr/hirnok/pkg/queue"
+	"github.com/rlsvr/inas/pkg/queue"
 )
 
 // Subscriber represents a connected SSE client's message mailbox.

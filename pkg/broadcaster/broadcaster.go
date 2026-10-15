@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 
 	"github.com/rlsvr/blazesse/pkg/frame"
-	"github.com/rlsvr/hirnok/pkg/queue"
-	"github.com/rlsvr/hirnok/pkg/worker"
+	"github.com/rlsvr/inas/pkg/queue"
+	"github.com/rlsvr/inas/pkg/worker"
 )
 
 var (

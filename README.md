@@ -6,7 +6,7 @@
 
 **`blazesse`** is an ultra-high-throughput, zero-allocation Server-Sent Events (SSE) toolkit for Go.
 
-Engineered to eliminate slow-consumer memory bloat and withstand 50,000+ concurrent subscribers per node, `blazesse` provides both **direct 1-to-1 connection streaming** (for AI/LLM token generation and long-running job progress) and **sharded 1-to-N broadcasting** (with atomic state conflation and lossless FIFO queues powered by [`github.com/rlsvr/hirnok`](https://github.com/rlsvr/hirnok)).
+Engineered to eliminate slow-consumer memory bloat and withstand 50,000+ concurrent subscribers per node, `blazesse` provides both **direct 1-to-1 connection streaming** (for AI/LLM token generation and long-running job progress) and **sharded 1-to-N broadcasting** (with atomic state conflation and lossless FIFO queues powered by [`github.com/rlsvr/inas`](https://github.com/rlsvr/inas)).
 
 ---
 
@@ -161,7 +161,7 @@ curl -N "http://localhost:8080/tickers?topics=crypto.BTC,crypto.ETH"
 ---
 
 ### 3. Lossless FIFO Delivery (Chat & Audit Feeds)
-Powered by [`github.com/rlsvr/hirnok/pkg/queue`](https://github.com/rlsvr/hirnok):
+Powered by [`github.com/rlsvr/inas/pkg/queue`](https://github.com/rlsvr/inas):
 
 ```go
 b := blazesse.NewBroadcaster(
@@ -174,7 +174,7 @@ b := blazesse.NewBroadcaster(
 ---
 
 ### 4. Decoupled Asynchronous Fanout Worker Pool
-Offload fanout loops entirely from ingress network threads (`TryPush < 50ns`) using [`github.com/rlsvr/hirnok/pkg/worker`](https://github.com/rlsvr/hirnok):
+Offload fanout loops entirely from ingress network threads (`TryPush < 50ns`) using [`github.com/rlsvr/inas/pkg/worker`](https://github.com/rlsvr/inas):
 
 ```go
 b := blazesse.NewBroadcaster(
@@ -194,7 +194,7 @@ b := blazesse.NewBroadcaster(
 | `WithDeliveryMode(mode DeliveryMode)` | Mailbox strategy (`DeliveryConflated` or `DeliveryFIFO`) | `DeliveryConflated` |
 | `WithFIFOBufferSize(size int)` | Queue capacity per subscriber in FIFO mode | `512` |
 | `WithOverflowPolicy(policy OverflowPolicy)` | Buffer overflow policy (`DropOldest`, `DropNewest`, `Disconnect`) | `OverflowDropOldest` |
-| `WithAsyncWorkers(workers, queueCap int)` | Decoupled fanout worker pool via `hirnok` | `0` (synchronous) |
+| `WithAsyncWorkers(workers, queueCap int)` | Decoupled fanout worker pool via `inas` | `0` (synchronous) |
 | `WithTopicExtractor(fn TopicExtractor)` | Custom topic extraction from `*http.Request` | Query `?topic=`, `?topics=` |
 | `WithOnConnect(fn func(r) error)` | Pre-connection authentication & authorization hook | `nil` |
 | `WithOnDisconnect(fn func(r, topics))` | Connection termination callback | `nil` |

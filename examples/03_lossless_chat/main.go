@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	// Lossless FIFO broadcaster powered by github.com/rlsvr/hirnok
+	// Lossless FIFO broadcaster powered by github.com/rlsvr/inas
 	b := blazesse.NewBroadcaster(
 		blazesse.WithDeliveryMode(blazesse.DeliveryFIFO),
 		blazesse.WithFIFOBufferSize(512),
