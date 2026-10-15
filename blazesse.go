@@ -32,6 +32,9 @@ type (
 	// Subscriber is a connected client's message mailbox.
 	Subscriber = broadcaster.Subscriber
 
+	// RegistryEngine defines the internal topic subscription storage model (EngineShardedMutex vs EngineLockFree).
+	RegistryEngine = broadcaster.RegistryEngine
+
 	// DeliveryMode defines the mailbox delivery strategy (Conflated vs FIFO).
 	DeliveryMode = broadcaster.DeliveryMode
 
@@ -46,6 +49,19 @@ type (
 
 	// CounterMetrics provides atomic metric counters.
 	CounterMetrics = broadcaster.CounterMetrics
+)
+
+// RegistryEngine constants
+const (
+	// EngineShardedMutex (default) partitions topics across 64 CPU-padded RWMutex shards.
+	// Best suited for low-to-medium churn subscriptions.
+	EngineShardedMutex = broadcaster.EngineShardedMutex
+
+	// EngineLockFree uses an actor-based Copy-On-Write topic snapshot (atomic.Pointer).
+	// Reads during Publish are 100% lock-free (MOV instruction).
+	// Subscriptions and view switches are batched asynchronously, completely eliminating
+	// writer lock contention and fan-out pauses.
+	EngineLockFree = broadcaster.EngineLockFree
 )
 
 // DeliveryMode constants
@@ -116,17 +132,21 @@ var (
 
 // Functional configuration options
 var (
-	WithShards         = broadcaster.WithShards
-	WithWriteTimeout   = broadcaster.WithWriteTimeout
-	WithHeartbeat      = broadcaster.WithHeartbeat
-	WithPingComment    = broadcaster.WithPingComment
-	WithDeliveryMode   = broadcaster.WithDeliveryMode
-	WithFIFOBufferSize = broadcaster.WithFIFOBufferSize
-	WithOverflowPolicy = broadcaster.WithOverflowPolicy
-	WithAsyncWorkers   = broadcaster.WithAsyncWorkers
-	WithTopicExtractor = broadcaster.WithTopicExtractor
-	WithMetrics        = broadcaster.WithMetrics
-	WithOnConnect      = broadcaster.WithOnConnect
-	WithOnDisconnect   = broadcaster.WithOnDisconnect
-	WithHeader         = broadcaster.WithHeader
+	WithEngine            = broadcaster.WithEngine
+	WithReconfigInterval  = broadcaster.WithReconfigInterval
+	WithReconfigBatchSize = broadcaster.WithReconfigBatchSize
+	WithReconfigWait      = broadcaster.WithReconfigWait
+	WithShards            = broadcaster.WithShards
+	WithWriteTimeout      = broadcaster.WithWriteTimeout
+	WithHeartbeat         = broadcaster.WithHeartbeat
+	WithPingComment       = broadcaster.WithPingComment
+	WithDeliveryMode      = broadcaster.WithDeliveryMode
+	WithFIFOBufferSize    = broadcaster.WithFIFOBufferSize
+	WithOverflowPolicy    = broadcaster.WithOverflowPolicy
+	WithAsyncWorkers      = broadcaster.WithAsyncWorkers
+	WithTopicExtractor    = broadcaster.WithTopicExtractor
+	WithMetrics           = broadcaster.WithMetrics
+	WithOnConnect         = broadcaster.WithOnConnect
+	WithOnDisconnect      = broadcaster.WithOnDisconnect
+	WithHeader            = broadcaster.WithHeader
 )

@@ -19,6 +19,22 @@ const (
 	DeliveryFIFO
 )
 
+// RegistryEngine determines the internal topic subscription storage model.
+type RegistryEngine uint8
+
+const (
+	// EngineShardedMutex (default) partitions topics across 64 CPU-padded RWMutex shards.
+	// Provides immediate 0ms subscription registration and in-place map mutation.
+	// Best suited for low-to-medium churn subscriptions (e.g. market data, metrics).
+	EngineShardedMutex RegistryEngine = iota
+
+	// EngineLockFree uses an actor-based Copy-On-Write topic snapshot (atomic.Pointer).
+	// Reads during Publish are 100% lock-free (single MOV instruction).
+	// Reconfiguration mutations (sub/unsub/switch) are batched asynchronously, completely
+	// eliminating writer lock contention and fan-out stalls during rapid client view switching.
+	EngineLockFree
+)
+
 // OverflowPolicy defines what happens when a FIFO subscriber's queue reaches capacity.
 type OverflowPolicy uint8
 
@@ -38,44 +54,90 @@ type TopicExtractor func(r *http.Request) ([]string, error)
 
 // Options holds configuration for Broadcaster and Stream.
 type Options struct {
-	Shards         int
-	WriteTimeout   time.Duration
-	PingInterval   time.Duration
-	PingJitter     time.Duration
-	PingComment    string
-	DeliveryMode   DeliveryMode
-	FIFOBufferSize int
-	OverflowPolicy OverflowPolicy
-	AsyncWorkers   int
-	AsyncQueueCap  int
-	TopicExtractor TopicExtractor
-	Metrics        MetricsCollector
-	OnConnect      func(r *http.Request) error
-	OnDisconnect   func(r *http.Request, topics []string)
-	CustomHeaders  map[string]string
+	Engine           RegistryEngine
+	ReconfigInterval time.Duration
+	ReconfigBatchSize int
+	ReconfigWait     bool
+	Shards           int
+	WriteTimeout     time.Duration
+	PingInterval     time.Duration
+	PingJitter       time.Duration
+	PingComment      string
+	DeliveryMode     DeliveryMode
+	FIFOBufferSize   int
+	OverflowPolicy   OverflowPolicy
+	AsyncWorkers     int
+	AsyncQueueCap    int
+	TopicExtractor   TopicExtractor
+	Metrics          MetricsCollector
+	OnConnect        func(r *http.Request) error
+	OnDisconnect     func(r *http.Request, topics []string)
+	CustomHeaders    map[string]string
 }
 
 // DefaultOptions returns production-ready default settings.
 func DefaultOptions() Options {
 	return Options{
-		Shards:         64,
-		WriteTimeout:   3 * time.Second,
-		PingInterval:   20 * time.Second,
-		PingJitter:     10 * time.Second,
-		PingComment:    "ping",
-		DeliveryMode:   DeliveryConflated,
-		FIFOBufferSize: 512,
-		OverflowPolicy: OverflowDropOldest,
-		AsyncWorkers:   0, // synchronous fanout by default
-		AsyncQueueCap:  10000,
-		TopicExtractor: DefaultTopicExtractor,
-		Metrics:        NoopMetrics{},
-		CustomHeaders:  make(map[string]string),
+		Engine:           EngineShardedMutex,
+		ReconfigInterval: 15 * time.Millisecond,
+		ReconfigBatchSize: 128,
+		ReconfigWait:     false,
+		Shards:           64,
+		WriteTimeout:     3 * time.Second,
+		PingInterval:     20 * time.Second,
+		PingJitter:       10 * time.Second,
+		PingComment:      "ping",
+		DeliveryMode:     DeliveryConflated,
+		FIFOBufferSize:   512,
+		OverflowPolicy:   OverflowDropOldest,
+		AsyncWorkers:     0, // synchronous fanout by default
+		AsyncQueueCap:    10000,
+		TopicExtractor:   DefaultTopicExtractor,
+		Metrics:          NoopMetrics{},
+		CustomHeaders:    make(map[string]string),
 	}
 }
 
 // Option configures Broadcaster behavior.
 type Option func(*Options)
+
+// WithEngine sets the internal topic subscription storage model (EngineShardedMutex or EngineLockFree).
+func WithEngine(e RegistryEngine) Option {
+	return func(o *Options) {
+		o.Engine = e
+	}
+}
+
+// WithReconfigInterval configures the batching timer window for the lock-free actor loop.
+// Defaults to 15ms. Setting smaller intervals (e.g. 2-5ms) reduces registration delay at
+// the cost of more frequent snapshot clone checks.
+func WithReconfigInterval(d time.Duration) Option {
+	return func(o *Options) {
+		if d > 0 {
+			o.ReconfigInterval = d
+		}
+	}
+}
+
+// WithReconfigBatchSize configures the maximum pending subscription mutations batched
+// before immediately triggering a snapshot update without waiting for the timer interval.
+// Defaults to 128.
+func WithReconfigBatchSize(size int) Option {
+	return func(o *Options) {
+		if size > 0 {
+			o.ReconfigBatchSize = size
+		}
+	}
+}
+
+// WithReconfigWait configures whether Subscribe and Unsubscribe calls wait synchronously
+// until the next snapshot incorporates their mutation before returning.
+// Defaults to false (asynchronous fire-and-forget).
+func WithReconfigWait(wait bool) Option {
+	return func(o *Options) {
+		o.ReconfigWait = wait
+	}
+}
 
 // WithShards sets the number of topic shards (must be a power of two, e.g. 32, 64, 128, 256).
 func WithShards(n int) Option {
