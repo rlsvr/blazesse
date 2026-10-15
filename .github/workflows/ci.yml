@@ -31,7 +31,10 @@ jobs:
           diff -u <(echo -n) <(gofmt -d .)
 
       - name: Run Tests with Race Detector
-        run: go test -v -race -coverprofile=coverage.txt ./...
+        run: go test -v -race -coverprofile=coverage.txt ./pkg/... .
+
+      - name: Build Examples
+        run: go build ./examples/...
 
       - name: Run Fuzz Smoke Test
         run: go test -fuzz=FuzzFrameFormat -fuzztime=5s ./pkg/frame
