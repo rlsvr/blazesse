@@ -2,6 +2,8 @@ package broadcaster
 
 import "sync/atomic"
 
+//go:generate mockgen -destination=mock/mock_metrics.go -package=mock github.com/rlsvr/blazesse/pkg/broadcaster MetricsCollector
+
 // MetricsCollector defines hooks for observing broadcaster and stream activity.
 type MetricsCollector interface {
 	OnClientConnected(topic string)

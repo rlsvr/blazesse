@@ -25,6 +25,8 @@ type asyncShard struct {
 	q *queue.Queue[asyncJob]
 }
 
+//go:generate mockgen -source=broadcaster.go -destination=mock/mock_engine.go -package=mock engine
+
 // engine abstracts internal topic subscription storage and lookup strategies.
 type engine interface {
 	subscribe(topics []string, sub Subscriber) func()

@@ -9,6 +9,8 @@ import (
 	"github.com/rlsvr/blazesse/pkg/frame"
 )
 
+//go:generate mockgen -destination=mock/mock_subscriber.go -package=mock github.com/rlsvr/blazesse/pkg/broadcaster Subscriber
+
 // Subscriber represents a connected SSE client's message mailbox.
 type Subscriber interface {
 	// Push enqueues or updates the newest frame in the subscriber's mailbox.
