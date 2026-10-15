@@ -31,7 +31,7 @@ jobs:
           diff -u <(echo -n) <(gofmt -d .)
 
       - name: Run Tests with Race Detector
-        run: go test -v -race -coverprofile=coverage.txt ./pkg/... .
+        run: go test -v -race -coverprofile=coverage.txt ./pkg/... . ./test/...
 
       - name: Build Examples
         run: go build ./examples/...
