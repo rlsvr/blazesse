@@ -40,6 +40,6 @@ jobs:
         run: go test -fuzz=FuzzFrameFormat -fuzztime=5s ./pkg/frame
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.64.6
+          version: v2.13
