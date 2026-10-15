@@ -12,17 +12,26 @@ var (
 )
 
 // DefaultTopicExtractor extracts topics from query parameters (?topic=X and ?topics=X,Y).
+// Topics are trimmed and deduplicated, preserving insertion order.
 func DefaultTopicExtractor(r *http.Request) ([]string, error) {
 	query := r.URL.Query()
 	var topics []string
+	seen := make(map[string]struct{})
+
+	addTopic := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			if _, ok := seen[t]; !ok {
+				seen[t] = struct{}{}
+				topics = append(topics, t)
+			}
+		}
+	}
 
 	// Check ?topic=foo (supports multiple ?topic=foo&topic=bar)
 	if list, ok := query["topic"]; ok {
 		for _, t := range list {
-			t = strings.TrimSpace(t)
-			if t != "" {
-				topics = append(topics, t)
-			}
+			addTopic(t)
 		}
 	}
 
@@ -31,10 +40,7 @@ func DefaultTopicExtractor(r *http.Request) ([]string, error) {
 		for _, item := range list {
 			parts := strings.Split(item, ",")
 			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					topics = append(topics, p)
-				}
+				addTopic(p)
 			}
 		}
 	}
@@ -52,20 +58,51 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check connection limits (if configured)
+	if b.opts.MaxConnections > 0 && b.TotalSubscribers() >= b.opts.MaxConnections {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "too many connections", http.StatusTooManyRequests)
+		return
+	}
+
 	b.handlersWg.Add(1)
 	defer b.handlersWg.Done()
 
 	// Extract topics from request
 	topics, err := b.opts.TopicExtractor(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "bad request: missing topic", http.StatusBadRequest)
 		return
+	}
+
+	// Validate topic count
+	if b.opts.MaxTopicsPerConn > 0 && len(topics) > b.opts.MaxTopicsPerConn {
+		http.Error(w, "too many topics requested", http.StatusBadRequest)
+		return
+	}
+
+	// Validate topic length
+	if b.opts.MaxTopicLen > 0 {
+		for _, t := range topics {
+			if len(t) > b.opts.MaxTopicLen {
+				http.Error(w, "topic exceeds maximum length", http.StatusBadRequest)
+				return
+			}
+		}
 	}
 
 	// Run OnConnect authorization/validation hook
 	if b.opts.OnConnect != nil {
 		if err := b.opts.OnConnect(r); err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Run topic-aware authorization hook
+	if b.opts.AuthorizeTopics != nil {
+		if err := b.opts.AuthorizeTopics(r, topics); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 	}

@@ -73,6 +73,10 @@ type Options struct {
 	OnConnect         func(r *http.Request) error
 	OnDisconnect      func(r *http.Request, topics []string)
 	CustomHeaders     map[string]string
+	MaxTopicsPerConn  int
+	MaxTopicLen       int
+	MaxConnections    int
+	AuthorizeTopics   func(r *http.Request, topics []string) error
 }
 
 // DefaultOptions returns production-ready default settings.
@@ -95,6 +99,10 @@ func DefaultOptions() Options {
 		TopicExtractor:    DefaultTopicExtractor,
 		Metrics:           NoopMetrics{},
 		CustomHeaders:     make(map[string]string),
+		MaxTopicsPerConn:  32,
+		MaxTopicLen:       128,
+		MaxConnections:    0, // 0 = unlimited
+		AuthorizeTopics:   nil,
 	}
 }
 
@@ -305,5 +313,39 @@ func WithHeader(key, value string) Option {
 			o.CustomHeaders = make(map[string]string)
 		}
 		o.CustomHeaders[key] = value
+	}
+}
+
+// WithMaxTopicsPerConn sets the maximum number of unique topics a single HTTP client can subscribe to.
+// Defaults to 32. Set to 0 to allow unlimited topics.
+func WithMaxTopicsPerConn(limit int) Option {
+	return func(o *Options) {
+		o.MaxTopicsPerConn = limit
+	}
+}
+
+// WithMaxTopicLen sets the maximum character length for any topic string.
+// Defaults to 128. Set to 0 to disable topic length validation.
+func WithMaxTopicLen(limit int) Option {
+	return func(o *Options) {
+		o.MaxTopicLen = limit
+	}
+}
+
+// WithMaxConnections sets the maximum active concurrent SSE subscriber connections allowed.
+// When reached, incoming connection requests are rejected with HTTP 429 (Too Many Requests).
+// Defaults to 0 (unlimited).
+func WithMaxConnections(limit int) Option {
+	return func(o *Options) {
+		o.MaxConnections = limit
+	}
+}
+
+// WithAuthorizeTopics sets an authorization callback that validates both the request and the
+// specific topics requested before upgrading the SSE stream.
+// If the hook returns an error, the connection is rejected with HTTP 403 Forbidden.
+func WithAuthorizeTopics(fn func(r *http.Request, topics []string) error) Option {
+	return func(o *Options) {
+		o.AuthorizeTopics = fn
 	}
 }

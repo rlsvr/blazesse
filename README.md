@@ -341,6 +341,10 @@ b := blazesse.NewBroadcaster(
 | `WithOnConnect(fn func(r) error)` | Pre-connection authentication & authorization hook | `nil` |
 | `WithOnDisconnect(fn func(r, topics))` | Connection termination callback | `nil` |
 | `WithHeader(key, value string)` | Custom response headers (e.g. CORS) | `none` |
+| `WithMaxTopicsPerConn(limit int)` | Maximum unique topics per client connection | `32` |
+| `WithMaxTopicLen(limit int)` | Maximum character length for topic strings | `128` |
+| `WithMaxConnections(limit int)` | Maximum concurrent connections allowed (429 when saturated) | `0` (unlimited) |
+| `WithAuthorizeTopics(fn func(r, topics))` | Topic-aware pre-connection authorization hook (403 on error) | `nil` |
 | `WithMetrics(m MetricsCollector)` | Metrics hook (Prometheus/custom counters) | `NoopMetrics` |
 
 ---

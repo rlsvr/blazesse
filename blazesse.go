@@ -14,6 +14,9 @@
 package blazesse
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/rlsvr/blazesse/pkg/broadcaster"
 	"github.com/rlsvr/blazesse/pkg/frame"
 )
@@ -55,6 +58,9 @@ type (
 
 	// CounterMetrics provides atomic metric counters.
 	CounterMetrics = broadcaster.CounterMetrics
+
+	// TopicExtractor extracts subscribed topics from an incoming HTTP request.
+	TopicExtractor = broadcaster.TopicExtractor
 )
 
 // RegistryEngine constants
@@ -92,70 +98,168 @@ const (
 )
 
 // Frame constructors
-var (
-	// NewFrame formats a W3C SSE compliant frame with event, id, retry, and multiline data.
-	NewFrame = frame.Format
 
-	// TextFrame creates a single-line data frame without an event name.
-	TextFrame = frame.Text
+// NewFrame formats a W3C SSE compliant frame with event, id, retry, and multiline data.
+func NewFrame(event, id string, retry time.Duration, data []byte) *Frame {
+	return frame.Format(event, id, retry, data)
+}
 
-	// EventFrame creates a frame with an event name and data payload.
-	EventFrame = frame.Event
+// TextFrame creates a single-line data frame without an event name.
+func TextFrame(data string) *Frame {
+	return frame.Text(data)
+}
 
-	// BytesFrame creates a frame with an event name and byte payload.
-	BytesFrame = frame.Bytes
+// EventFrame creates a frame with an event name and data payload.
+func EventFrame(event, data string) *Frame {
+	return frame.Event(event, data)
+}
 
-	// CommentFrame creates an SSE comment frame (": <comment>\n\n").
-	CommentFrame = frame.Comment
+// BytesFrame creates a frame with an event name and byte payload.
+func BytesFrame(event string, data []byte) *Frame {
+	return frame.Bytes(event, data)
+}
 
-	// PingFrame returns the shared keep-alive heartbeat frame (": ping\n\n").
-	PingFrame = frame.Ping
+// CommentFrame creates an SSE comment frame (": <comment>\n\n").
+func CommentFrame(comment string) *Frame {
+	return frame.Comment(comment)
+}
 
-	// FromRawFrame wraps pre-formatted wire bytes.
-	FromRawFrame = frame.FromRaw
+// PingFrame returns the shared keep-alive heartbeat frame (": ping\n\n").
+func PingFrame() *Frame {
+	return frame.Ping()
+}
 
-	// JSONFrame formats an SSE frame with an event name and JSON-encoded payload.
-	JSONFrame = frame.JSON
+// FromRawFrame wraps pre-formatted wire bytes.
+func FromRawFrame(b []byte) *Frame {
+	return frame.FromRaw(b)
+}
 
-	// JSONTextFrame formats an SSE data frame without an event name using JSON encoding.
-	JSONTextFrame = frame.JSONText
+// JSONFrame formats an SSE frame with an event name and JSON-encoded payload.
+func JSONFrame(event string, v any) (*Frame, error) {
+	return frame.JSON(event, v)
+}
 
-	// JSONWithFrame formats an SSE frame using a user-provided JSON marshaler function.
-	JSONWithFrame = frame.JSONWith
-)
+// JSONTextFrame formats an SSE data frame without an event name using JSON encoding.
+func JSONTextFrame(v any) (*Frame, error) {
+	return frame.JSONText(v)
+}
+
+// JSONWithFrame formats an SSE frame using a user-provided JSON marshaler function.
+func JSONWithFrame(event string, v any, marshal func(any) ([]byte, error)) (*Frame, error) {
+	return frame.JSONWith(event, v, marshal)
+}
 
 // Engine constructors
-var (
-	// NewBroadcaster initializes a high-throughput sharded SSE broadcaster.
-	NewBroadcaster = broadcaster.New
 
-	// Upgrade converts an HTTP request/response into an active 1-to-1 SSE stream.
-	Upgrade = broadcaster.Upgrade
+// NewBroadcaster initializes a high-throughput sharded SSE broadcaster.
+func NewBroadcaster(opts ...Option) *Broadcaster {
+	return broadcaster.New(opts...)
+}
 
-	// NewCounterMetrics creates an atomic metrics collector.
-	NewCounterMetrics = broadcaster.NewCounterMetrics
-)
+// Upgrade converts an HTTP request/response into an active 1-to-1 SSE stream.
+func Upgrade(w http.ResponseWriter, r *http.Request, opts ...Option) (*Stream, error) {
+	return broadcaster.Upgrade(w, r, opts...)
+}
+
+// NewCounterMetrics creates an atomic metrics collector.
+func NewCounterMetrics() *CounterMetrics {
+	return broadcaster.NewCounterMetrics()
+}
 
 // Functional configuration options
-var (
-	NewEngineLockFree     = broadcaster.NewEngineLockFree
-	NewEngineShardedMutex = broadcaster.NewEngineShardedMutex
-	WithEngine            = broadcaster.WithEngine
-	WithReconfigInterval  = broadcaster.WithReconfigInterval
-	WithReconfigBatchSize = broadcaster.WithReconfigBatchSize
-	WithReconfigWait      = broadcaster.WithReconfigWait
-	WithEngineShards      = broadcaster.WithEngineShards
-	WithShards            = broadcaster.WithShards
-	WithWriteTimeout      = broadcaster.WithWriteTimeout
-	WithHeartbeat         = broadcaster.WithHeartbeat
-	WithPingComment       = broadcaster.WithPingComment
-	WithDeliveryMode      = broadcaster.WithDeliveryMode
-	WithFIFOBufferSize    = broadcaster.WithFIFOBufferSize
-	WithOverflowPolicy    = broadcaster.WithOverflowPolicy
-	WithAsyncWorkers      = broadcaster.WithAsyncWorkers
-	WithTopicExtractor    = broadcaster.WithTopicExtractor
-	WithMetrics           = broadcaster.WithMetrics
-	WithOnConnect         = broadcaster.WithOnConnect
-	WithOnDisconnect      = broadcaster.WithOnDisconnect
-	WithHeader            = broadcaster.WithHeader
-)
+
+func NewEngineLockFree(opts ...LockFreeEngineOption) Option {
+	return broadcaster.NewEngineLockFree(opts...)
+}
+
+func NewEngineShardedMutex(opts ...ShardedMutexEngineOption) Option {
+	return broadcaster.NewEngineShardedMutex(opts...)
+}
+
+func WithEngine(e RegistryEngine) Option {
+	return broadcaster.WithEngine(e)
+}
+
+func WithReconfigInterval(d time.Duration) LockFreeEngineOption {
+	return broadcaster.WithReconfigInterval(d)
+}
+
+func WithReconfigBatchSize(size int) LockFreeEngineOption {
+	return broadcaster.WithReconfigBatchSize(size)
+}
+
+func WithReconfigWait(wait bool) LockFreeEngineOption {
+	return broadcaster.WithReconfigWait(wait)
+}
+
+func WithEngineShards(n int) ShardedMutexEngineOption {
+	return broadcaster.WithEngineShards(n)
+}
+
+func WithShards(n int) Option {
+	return broadcaster.WithShards(n)
+}
+
+func WithWriteTimeout(d time.Duration) Option {
+	return broadcaster.WithWriteTimeout(d)
+}
+
+func WithHeartbeat(interval, jitter time.Duration) Option {
+	return broadcaster.WithHeartbeat(interval, jitter)
+}
+
+func WithPingComment(comment string) Option {
+	return broadcaster.WithPingComment(comment)
+}
+
+func WithDeliveryMode(mode DeliveryMode) Option {
+	return broadcaster.WithDeliveryMode(mode)
+}
+
+func WithFIFOBufferSize(size int) Option {
+	return broadcaster.WithFIFOBufferSize(size)
+}
+
+func WithOverflowPolicy(policy OverflowPolicy) Option {
+	return broadcaster.WithOverflowPolicy(policy)
+}
+
+func WithAsyncWorkers(workers int, queueCap int) Option {
+	return broadcaster.WithAsyncWorkers(workers, queueCap)
+}
+
+func WithTopicExtractor(fn TopicExtractor) Option {
+	return broadcaster.WithTopicExtractor(fn)
+}
+
+func WithMetrics(m MetricsCollector) Option {
+	return broadcaster.WithMetrics(m)
+}
+
+func WithOnConnect(fn func(r *http.Request) error) Option {
+	return broadcaster.WithOnConnect(fn)
+}
+
+func WithOnDisconnect(fn func(r *http.Request, topics []string)) Option {
+	return broadcaster.WithOnDisconnect(fn)
+}
+
+func WithHeader(key, value string) Option {
+	return broadcaster.WithHeader(key, value)
+}
+
+func WithMaxTopicsPerConn(limit int) Option {
+	return broadcaster.WithMaxTopicsPerConn(limit)
+}
+
+func WithMaxTopicLen(limit int) Option {
+	return broadcaster.WithMaxTopicLen(limit)
+}
+
+func WithMaxConnections(limit int) Option {
+	return broadcaster.WithMaxConnections(limit)
+}
+
+func WithAuthorizeTopics(fn func(r *http.Request, topics []string) error) Option {
+	return broadcaster.WithAuthorizeTopics(fn)
+}

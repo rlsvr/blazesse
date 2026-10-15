@@ -23,16 +23,17 @@ var (
 // It wraps http.ResponseWriter with per-write deadlines, automatic jittered keep-alive
 // heartbeats, and safe concurrent writes.
 type Stream struct {
-	w       http.ResponseWriter
-	rc      *http.ResponseController
-	ctx     context.Context
-	cancel  context.CancelFunc
-	opts    Options
-	mu      sync.Mutex // serializes writes between Send calls and heartbeat pings
-	closed  atomic.Bool
-	done    chan struct{}
-	lastAct atomic.Int64 // timestamp of last write to prevent redundant keep-alives
-	pingRaw []byte
+	w           http.ResponseWriter
+	rc          *http.ResponseController
+	ctx         context.Context
+	cancel      context.CancelFunc
+	stopWatcher atomic.Pointer[func() bool]
+	opts        Options
+	mu          sync.Mutex // serializes writes between Send calls and heartbeat pings
+	closed      atomic.Bool
+	done        chan struct{}
+	lastAct     atomic.Int64 // timestamp of last write to prevent redundant keep-alives
+	pingRaw     []byte
 }
 
 // Upgrade initializes an HTTP connection for Server-Sent Events streaming.
@@ -100,14 +101,11 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...Option) (*Stream, e
 		go s.heartbeatLoop()
 	}
 
-	// Monitor request context cancellation
-	go func() {
-		select {
-		case <-r.Context().Done():
-			_ = s.Close()
-		case <-s.done:
-		}
-	}()
+	// Register context cancellation watcher using context.AfterFunc (0 goroutines spawned)
+	stop := context.AfterFunc(r.Context(), func() {
+		_ = s.Close()
+	})
+	s.stopWatcher.Store(&stop)
 
 	return s, nil
 }
@@ -211,19 +209,22 @@ func (s *Stream) Done() <-chan struct{} {
 }
 
 // Close gracefully terminates the stream.
+// It is non-blocking and immediately propagates context cancellation and done signals,
+// unblocking any in-flight writers without waiting on locks.
 func (s *Stream) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closeLocked()
-}
-
-func (s *Stream) closeLocked() error {
 	if s.closed.Swap(true) {
 		return nil
+	}
+	if stopFn := s.stopWatcher.Swap(nil); stopFn != nil && *stopFn != nil {
+		(*stopFn)()
 	}
 	s.cancel()
 	close(s.done)
 	return nil
+}
+
+func (s *Stream) closeLocked() error {
+	return s.Close()
 }
 
 func (s *Stream) heartbeatLoop() {
