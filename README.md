@@ -184,11 +184,57 @@ b := blazesse.NewBroadcaster(
 
 ---
 
+## Choosing a Registry Engine: Lock-Free vs. Sharded Mutex
+
+`blazesse` provides two distinct internal subscription storage engines depending on your workload:
+
+```go
+// Option A: Lock-Free Copy-On-Write (COW) Snapshot (Default for high-churn view switching)
+b := blazesse.NewBroadcaster(
+	blazesse.NewEngineLockFree(
+		blazesse.WithReconfigInterval(15*time.Millisecond), // batching window
+		blazesse.WithReconfigBatchSize(128),               // max batch threshold
+		blazesse.WithReconfigWait(false),                  // async (true for synchronous join)
+	),
+	blazesse.WithDeliveryMode(blazesse.DeliveryFIFO),
+)
+
+// Option B: CPU Cache-Line Padded Sharded Mutex (Ideal for static connections or write-heavy churn)
+b := blazesse.NewBroadcaster(
+	blazesse.NewEngineShardedMutex(
+		blazesse.WithEngineShards(64), // 64 padded shards
+	),
+	blazesse.WithDeliveryMode(blazesse.DeliveryConflated),
+)
+```
+
+### Decision Matrix: Which Engine Should You Choose?
+
+| Workload Characteristic | `EngineLockFree` (`NewEngineLockFree`) | `EngineShardedMutex` (`NewEngineShardedMutex`) |
+| :--- | :--- | :--- |
+| **Primary Pattern** | **Read-Heavy / High-Churn View-Switching** | **Static Long-Lived Subs / Heavy Ingest** |
+| **Broadcast (`Publish`) Cost** | **Zero Locks** (`atomic.Pointer.Load()`, single `MOV`) | `RLock()` across hashed shard |
+| **Reader Contention** | **Zero contention** — broadcasts NEVER pause | Can stall behind active writer locks |
+| **Subscribe / Switch Latency** | Batched asynchronously (0–15ms configurable) | **Immediate 0ms** in-place map mutation |
+| **Memory Footprint** | Granular Copy-On-Write topic maps | Fixed sharded maps |
+| **Ideal Real-World Use Case** | **Social feeds, live chat rooms, mobile view switching** where thousands of users switch threads every few seconds without stalling broadcast delivery | **Stock market tickers, crypto order books, IoT telemetry** where clients connect once to fixed topics and remain for hours while millions of messages publish |
+
+> [!TIP]
+> **Why does this matter?** In Go, `sync.RWMutex` is writer-preferred. Under rapid view switching (thousands of clients subscribing/unsubscribing concurrently), writer `Lock()` calls starve broadcast `RLock()` readers, causing stuttering and fan-out stalls. `EngineLockFree` decouples `Publish` completely from subscription churn.
+
+---
+
 ## Configuration Options
 
 | Option | Description | Default |
 | :--- | :--- | :--- |
-| `WithShards(n int)` | Number of cache-line padded topic shards (power of two) | `64` |
+| `NewEngineLockFree(opts...)` | Lock-free actor-based Copy-On-Write topic snapshot | Active if specified |
+| `WithReconfigInterval(d)` | Micro-batch timer window for `EngineLockFree` | `15ms` |
+| `WithReconfigBatchSize(n)` | Batch capacity threshold triggering immediate CoW snapshot | `128` |
+| `WithReconfigWait(bool)` | Whether `Subscribe`/`Unsubscribe` wait for snapshot commit | `false` |
+| `NewEngineShardedMutex(opts...)` | 64 CPU cache-line padded RWMutex shards engine | Default (`EngineShardedMutex`) |
+| `WithEngineShards(n int)` | Shard count for `NewEngineShardedMutex` (power of 2) | `64` |
+| `WithShards(n int)` | Number of cache-line padded topic shards (alias) | `64` |
 | `WithWriteTimeout(d time.Duration)` | Maximum duration allowed for a single write + flush | `3s` |
 | `WithHeartbeat(base, jitter time.Duration)` | Keep-alive ping interval with randomized jitter | `20s + 10s jitter` |
 | `WithDeliveryMode(mode DeliveryMode)` | Mailbox strategy (`DeliveryConflated` or `DeliveryFIFO`) | `DeliveryConflated` |

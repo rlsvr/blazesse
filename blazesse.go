@@ -44,6 +44,12 @@ type (
 	// Option configures Broadcaster or Stream behavior.
 	Option = broadcaster.Option
 
+	// LockFreeEngineOption configures settings specific to EngineLockFree.
+	LockFreeEngineOption = broadcaster.LockFreeEngineOption
+
+	// ShardedMutexEngineOption configures settings specific to EngineShardedMutex.
+	ShardedMutexEngineOption = broadcaster.ShardedMutexEngineOption
+
 	// MetricsCollector observes broadcaster metrics.
 	MetricsCollector = broadcaster.MetricsCollector
 
@@ -132,10 +138,13 @@ var (
 
 // Functional configuration options
 var (
+	NewEngineLockFree     = broadcaster.NewEngineLockFree
+	NewEngineShardedMutex = broadcaster.NewEngineShardedMutex
 	WithEngine            = broadcaster.WithEngine
 	WithReconfigInterval  = broadcaster.WithReconfigInterval
 	WithReconfigBatchSize = broadcaster.WithReconfigBatchSize
 	WithReconfigWait      = broadcaster.WithReconfigWait
+	WithEngineShards      = broadcaster.WithEngineShards
 	WithShards            = broadcaster.WithShards
 	WithWriteTimeout      = broadcaster.WithWriteTimeout
 	WithHeartbeat         = broadcaster.WithHeartbeat

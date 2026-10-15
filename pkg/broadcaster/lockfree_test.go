@@ -15,11 +15,12 @@ import (
 
 func TestLockFree_PubSub_FIFO(t *testing.T) {
 	b := broadcaster.New(
-		broadcaster.WithEngine(broadcaster.EngineLockFree),
+		broadcaster.NewEngineLockFree(
+			broadcaster.WithReconfigInterval(5*time.Millisecond),
+			broadcaster.WithReconfigBatchSize(10),
+			broadcaster.WithReconfigWait(true),
+		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryFIFO),
-		broadcaster.WithReconfigInterval(5*time.Millisecond),
-		broadcaster.WithReconfigBatchSize(10),
-		broadcaster.WithReconfigWait(true),
 	)
 	defer b.Close()
 
@@ -63,10 +64,11 @@ func TestLockFree_PubSub_FIFO(t *testing.T) {
 
 func TestLockFree_PubSub_Conflated(t *testing.T) {
 	b := broadcaster.New(
-		broadcaster.WithEngine(broadcaster.EngineLockFree),
+		broadcaster.NewEngineLockFree(
+			broadcaster.WithReconfigInterval(5*time.Millisecond),
+			broadcaster.WithReconfigWait(true),
+		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryConflated),
-		broadcaster.WithReconfigInterval(5*time.Millisecond),
-		broadcaster.WithReconfigWait(true),
 	)
 	defer b.Close()
 
@@ -92,10 +94,11 @@ func TestLockFree_PubSub_Conflated(t *testing.T) {
 
 func TestLockFree_PublishAll(t *testing.T) {
 	b := broadcaster.New(
-		broadcaster.WithEngine(broadcaster.EngineLockFree),
+		broadcaster.NewEngineLockFree(
+			broadcaster.WithReconfigInterval(5*time.Millisecond),
+			broadcaster.WithReconfigWait(true),
+		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryFIFO),
-		broadcaster.WithReconfigInterval(5*time.Millisecond),
-		broadcaster.WithReconfigWait(true),
 	)
 	defer b.Close()
 
@@ -119,11 +122,12 @@ func TestLockFree_PublishAll(t *testing.T) {
 
 func TestLockFree_ConcurrentPublishAndViewSwitching(t *testing.T) {
 	b := broadcaster.New(
-		broadcaster.WithEngine(broadcaster.EngineLockFree),
+		broadcaster.NewEngineLockFree(
+			broadcaster.WithReconfigInterval(5*time.Millisecond),
+			broadcaster.WithReconfigBatchSize(32),
+			broadcaster.WithReconfigWait(false),
+		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryFIFO),
-		broadcaster.WithReconfigInterval(5*time.Millisecond),
-		broadcaster.WithReconfigBatchSize(32),
-		broadcaster.WithReconfigWait(false),
 	)
 	defer b.Close()
 
@@ -183,9 +187,10 @@ func TestLockFree_ConcurrentPublishAndViewSwitching(t *testing.T) {
 
 func TestFacade_EngineLockFree(t *testing.T) {
 	b := blazesse.NewBroadcaster(
-		blazesse.WithEngine(blazesse.EngineLockFree),
-		blazesse.WithReconfigInterval(10*time.Millisecond),
-		blazesse.WithReconfigWait(true),
+		blazesse.NewEngineLockFree(
+			blazesse.WithReconfigInterval(10*time.Millisecond),
+			blazesse.WithReconfigWait(true),
+		),
 	)
 	defer b.Close()
 
@@ -199,3 +204,23 @@ func TestFacade_EngineLockFree(t *testing.T) {
 		t.Fatalf("unexpected batch: %v", batch)
 	}
 }
+
+func TestFacade_EngineShardedMutex(t *testing.T) {
+	b := blazesse.NewBroadcaster(
+		blazesse.NewEngineShardedMutex(
+			blazesse.WithEngineShards(32),
+		),
+	)
+	defer b.Close()
+
+	sub, unsub := b.Subscribe("sharded_topic")
+	defer unsub()
+
+	b.Publish("sharded_topic", blazesse.TextFrame("hello sharded"))
+
+	batch := sub.Fetch()
+	if len(batch) != 1 || batch[0].String() != blazesse.TextFrame("hello sharded").String() {
+		t.Fatalf("unexpected batch: %v", batch)
+	}
+}
+

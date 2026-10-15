@@ -101,17 +101,13 @@ func DefaultOptions() Options {
 // Option configures Broadcaster behavior.
 type Option func(*Options)
 
-// WithEngine sets the internal topic subscription storage model (EngineShardedMutex or EngineLockFree).
-func WithEngine(e RegistryEngine) Option {
-	return func(o *Options) {
-		o.Engine = e
-	}
-}
+// LockFreeEngineOption configures settings specific to EngineLockFree.
+type LockFreeEngineOption func(*Options)
 
 // WithReconfigInterval configures the batching timer window for the lock-free actor loop.
 // Defaults to 15ms. Setting smaller intervals (e.g. 2-5ms) reduces registration delay at
 // the cost of more frequent snapshot clone checks.
-func WithReconfigInterval(d time.Duration) Option {
+func WithReconfigInterval(d time.Duration) LockFreeEngineOption {
 	return func(o *Options) {
 		if d > 0 {
 			o.ReconfigInterval = d
@@ -122,7 +118,7 @@ func WithReconfigInterval(d time.Duration) Option {
 // WithReconfigBatchSize configures the maximum pending subscription mutations batched
 // before immediately triggering a snapshot update without waiting for the timer interval.
 // Defaults to 128.
-func WithReconfigBatchSize(size int) Option {
+func WithReconfigBatchSize(size int) LockFreeEngineOption {
 	return func(o *Options) {
 		if size > 0 {
 			o.ReconfigBatchSize = size
@@ -133,9 +129,58 @@ func WithReconfigBatchSize(size int) Option {
 // WithReconfigWait configures whether Subscribe and Unsubscribe calls wait synchronously
 // until the next snapshot incorporates their mutation before returning.
 // Defaults to false (asynchronous fire-and-forget).
-func WithReconfigWait(wait bool) Option {
+func WithReconfigWait(wait bool) LockFreeEngineOption {
 	return func(o *Options) {
 		o.ReconfigWait = wait
+	}
+}
+
+// NewEngineLockFree configures Broadcaster to use EngineLockFree with lock-free specific options.
+// Reads during Publish are 100% lock-free (single MOV instruction).
+// Subscriptions and view switches are batched asynchronously, completely eliminating
+// writer lock contention and fanout pauses.
+func NewEngineLockFree(opts ...LockFreeEngineOption) Option {
+	return func(o *Options) {
+		o.Engine = EngineLockFree
+		for _, opt := range opts {
+			opt(o)
+		}
+	}
+}
+
+// ShardedMutexEngineOption configures settings specific to EngineShardedMutex.
+type ShardedMutexEngineOption func(*Options)
+
+// WithEngineShards sets the number of topic shards for the sharded mutex engine (must be power of two).
+func WithEngineShards(n int) ShardedMutexEngineOption {
+	return func(o *Options) {
+		if n > 0 {
+			p := 1
+			for p < n {
+				p <<= 1
+			}
+			o.Shards = p
+		}
+	}
+}
+
+// NewEngineShardedMutex configures Broadcaster to use EngineShardedMutex with shard-specific options.
+// Topics are partitioned across CPU-padded RWMutex shards.
+// Provides immediate 0ms subscription registration and in-place map mutation.
+// Best suited for low churn or write-heavy topologies where clients stay connected indefinitely.
+func NewEngineShardedMutex(opts ...ShardedMutexEngineOption) Option {
+	return func(o *Options) {
+		o.Engine = EngineShardedMutex
+		for _, opt := range opts {
+			opt(o)
+		}
+	}
+}
+
+// WithEngine sets the internal topic subscription storage model (EngineShardedMutex or EngineLockFree).
+func WithEngine(e RegistryEngine) Option {
+	return func(o *Options) {
+		o.Engine = e
 	}
 }
 
