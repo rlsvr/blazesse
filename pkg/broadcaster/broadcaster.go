@@ -43,6 +43,7 @@ type Broadcaster struct {
 	opts        Options
 	engine      engine
 	subCount    atomic.Int64
+	activeConns atomic.Int64
 	closed      atomic.Bool
 	asyncShards []*asyncShard
 	asyncWg     sync.WaitGroup
@@ -67,7 +68,7 @@ func New(opts ...Option) *Broadcaster {
 	}
 
 	if options.ReplayBufferCap > 0 {
-		b.replay = newReplayManager(options.ReplayBufferCap)
+		b.replay = newReplayManager(options.ReplayBufferCap, options.ReplayMissPolicy, options.ReplayMaxTopics)
 	}
 
 	if options.Engine == EngineLockFree {
@@ -119,11 +120,11 @@ func hashTopic(s string) uint32 {
 }
 
 // NewSubscriber creates a new mailbox Subscriber according to the configured DeliveryMode.
-func (b *Broadcaster) NewSubscriber() Subscriber {
+func (b *Broadcaster) NewSubscriber(topics ...string) Subscriber {
 	if b.opts.DeliveryMode == DeliveryFIFO {
 		return NewFIFOSubscriber(b.opts.FIFOBufferSize, b.opts.OverflowPolicy, b.opts.Metrics)
 	}
-	return NewConflatingSubscriber(b.opts.Metrics)
+	return NewConflatingSubscriber(b.opts.Metrics, topics...)
 }
 
 // Subscribe subscribes a new client to the given topic.
@@ -134,7 +135,7 @@ func (b *Broadcaster) Subscribe(topic string) (Subscriber, func()) {
 
 // SubscribeMulti subscribes a new client to multiple topics across shards.
 func (b *Broadcaster) SubscribeMulti(topics []string) (Subscriber, func()) {
-	sub := b.NewSubscriber()
+	sub := b.NewSubscriber(topics...)
 	if b.closed.Load() {
 		sub.Close()
 		return sub, func() {}

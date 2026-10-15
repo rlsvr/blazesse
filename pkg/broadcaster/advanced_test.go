@@ -99,14 +99,14 @@ func TestAdvanced_PublishAllDeduplication(t *testing.T) {
 func TestAdvanced_ConflatingSubscriber_ZeroAllocFetch(t *testing.T) {
 	sub := broadcaster.NewConflatingSubscriber(nil)
 	f := frame.Text("test")
-	sub.Push(f)
+	sub.Push("test", f)
 
 	allocs := testing.AllocsPerRun(100, func() {
 		batch := sub.Fetch()
 		if len(batch) == 0 {
 			t.Fatal("expected batch")
 		}
-		sub.Push(f)
+		sub.Push("test", f)
 	})
 
 	if allocs > 0 {

@@ -123,7 +123,7 @@ func (e *lockFreeEngine) publish(topic string, f *frame.Frame) {
 	}
 	subs := snap.topics[topic]
 	for client := range subs {
-		client.Push(f)
+		client.Push(topic, f)
 	}
 	e.opts.Metrics.OnFramePublished(topic, f.Len())
 }
@@ -138,7 +138,7 @@ func (e *lockFreeEngine) publishAll(f *frame.Frame) {
 		for client := range subs {
 			if _, ok := seen[client]; !ok {
 				seen[client] = struct{}{}
-				client.Push(f)
+				client.Push("*", f)
 			}
 		}
 	}

@@ -58,22 +58,34 @@ func (b *Broadcaster) validateRequest(w http.ResponseWriter, r *http.Request) ([
 		return nil, false
 	}
 
-	// Check connection limits (if configured)
-	if b.opts.MaxConnections > 0 && b.TotalSubscribers() >= b.opts.MaxConnections {
-		w.Header().Set("Retry-After", "5")
-		http.Error(w, "too many connections", http.StatusTooManyRequests)
-		return nil, false
+	// Atomic connection reservation to prevent TOCTOU bursts exceeding MaxConnections
+	if b.opts.MaxConnections > 0 {
+		if b.activeConns.Add(1) > int64(b.opts.MaxConnections) {
+			b.activeConns.Add(-1)
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "too many connections", http.StatusTooManyRequests)
+			return nil, false
+		}
+	}
+
+	// Helper to release reservation on validation error
+	releaseConn := func() {
+		if b.opts.MaxConnections > 0 {
+			b.activeConns.Add(-1)
+		}
 	}
 
 	// Extract topics from request
 	topics, err := b.opts.TopicExtractor(r)
 	if err != nil {
+		releaseConn()
 		http.Error(w, "bad request: missing topic", http.StatusBadRequest)
 		return nil, false
 	}
 
 	// Validate topic count
 	if b.opts.MaxTopicsPerConn > 0 && len(topics) > b.opts.MaxTopicsPerConn {
+		releaseConn()
 		http.Error(w, "too many topics requested", http.StatusBadRequest)
 		return nil, false
 	}
@@ -82,6 +94,7 @@ func (b *Broadcaster) validateRequest(w http.ResponseWriter, r *http.Request) ([
 	if b.opts.MaxTopicLen > 0 {
 		for _, t := range topics {
 			if len(t) > b.opts.MaxTopicLen {
+				releaseConn()
 				http.Error(w, "topic exceeds maximum length", http.StatusBadRequest)
 				return nil, false
 			}
@@ -91,6 +104,7 @@ func (b *Broadcaster) validateRequest(w http.ResponseWriter, r *http.Request) ([
 	// Run OnConnect authorization/validation hook
 	if b.opts.OnConnect != nil {
 		if err := b.opts.OnConnect(r); err != nil {
+			releaseConn()
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return nil, false
 		}
@@ -99,6 +113,7 @@ func (b *Broadcaster) validateRequest(w http.ResponseWriter, r *http.Request) ([
 	// Run topic-aware authorization hook
 	if b.opts.AuthorizeTopics != nil {
 		if err := b.opts.AuthorizeTopics(r, topics); err != nil {
+			releaseConn()
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return nil, false
 		}
@@ -120,22 +135,28 @@ func (b *Broadcaster) buildStreamOptions() []Option {
 	return streamOpts
 }
 
-func (b *Broadcaster) replayHistory(stream *Stream, topics []string, r *http.Request) error {
+func (b *Broadcaster) replayHistory(stream *Stream, topics []string, r *http.Request) (map[string]struct{}, error) {
 	lastID := r.Header.Get("Last-Event-ID")
 	if lastID == "" {
 		lastID = r.URL.Query().Get("last_event_id")
 	}
 	if lastID == "" || b.replay == nil {
-		return nil
+		return nil, nil
 	}
+	replayedIDs := make(map[string]struct{})
 	for _, topic := range topics {
 		if missed := b.replay.ReplayAfter(topic, lastID); len(missed) > 0 {
+			for _, f := range missed {
+				if id := f.ID(); id != "" {
+					replayedIDs[id] = struct{}{}
+				}
+			}
 			if err := stream.SendBatch(missed); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	return nil
+	return replayedIDs, nil
 }
 
 // ServeHTTP implements http.Handler, enabling Broadcaster to be mounted directly into routers.
@@ -143,6 +164,9 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	topics, ok := b.validateRequest(w, r)
 	if !ok {
 		return
+	}
+	if b.opts.MaxConnections > 0 {
+		defer b.activeConns.Add(-1)
 	}
 
 	b.handlersWg.Add(1)
@@ -159,7 +183,8 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 
 	// Replay missed historical events if Last-Event-ID is present and replay is enabled
-	if err := b.replayHistory(stream, topics, r); err != nil {
+	replayedIDs, err := b.replayHistory(stream, topics, r)
+	if err != nil {
 		return
 	}
 
@@ -176,7 +201,20 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 
 		case <-sub.Done():
-			_ = stream.SendBatch(sub.Fetch())
+			finalBatch := sub.Fetch()
+			if len(replayedIDs) > 0 {
+				filtered := finalBatch[:0]
+				for _, f := range finalBatch {
+					if id := f.ID(); id != "" {
+						if _, dup := replayedIDs[id]; dup {
+							continue
+						}
+					}
+					filtered = append(filtered, f)
+				}
+				finalBatch = filtered
+			}
+			_ = stream.SendBatch(finalBatch)
 			return
 
 		case <-sub.Recv():
@@ -186,6 +224,24 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				continue
+			}
+
+			// Deduplicate any overlapping frames that were already transmitted during replayHistory
+			if len(replayedIDs) > 0 {
+				filtered := batch[:0]
+				for _, f := range batch {
+					if id := f.ID(); id != "" {
+						if _, dup := replayedIDs[id]; dup {
+							delete(replayedIDs, id)
+							continue
+						}
+					}
+					filtered = append(filtered, f)
+				}
+				batch = filtered
+				if len(batch) == 0 {
+					continue
+				}
 			}
 
 			// Single flush syscall for all batched frames

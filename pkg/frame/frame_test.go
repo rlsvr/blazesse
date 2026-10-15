@@ -64,10 +64,23 @@ func TestFrame_EmptyData(t *testing.T) {
 }
 
 func TestFrame_FromRaw(t *testing.T) {
-	raw := []byte("event: raw\ndata: custom\n\n")
+	if frame.FromRaw(nil) != nil {
+		t.Fatal("expected nil frame for nil raw slice")
+	}
+
+	raw := []byte("id: raw-123\nevent: raw\ndata: custom\n\n")
 	f := frame.FromRaw(raw)
 	if f.String() != string(raw) {
 		t.Fatalf("expected %q, got %q", string(raw), f.String())
+	}
+	if f.ID() != "raw-123" {
+		t.Fatalf("expected id %q, got %q", "raw-123", f.ID())
+	}
+
+	// Verify immutability: mutating original slice does not affect frame
+	raw[0] = 'X'
+	if f.String() == string(raw) {
+		t.Fatal("expected frame to be immutable and unaffected by external slice mutation")
 	}
 }
 

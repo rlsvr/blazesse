@@ -16,7 +16,7 @@ func TestConflatingSubscriber_OverwritesIntermediateFrames(t *testing.T) {
 
 	// Push 1,000 updates without consumer draining
 	for i := 1; i <= 1000; i++ {
-		sub.Push(frame.Text(fmt.Sprintf("state-%d", i)))
+		sub.Push("ticker", frame.Text(fmt.Sprintf("state-%d", i)))
 	}
 
 	// Consumer wakes up via Recv signal
@@ -63,7 +63,7 @@ func TestConflatingSubscriber_ConcurrentPush(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for i := 0; i < pushesPerGoroutine; i++ {
-				sub.Push(frame.Text(fmt.Sprintf("g%d-item%d", id, i)))
+				sub.Push("ticker", frame.Text(fmt.Sprintf("g%d-item%d", id, i)))
 			}
 		}(g)
 	}
@@ -74,5 +74,41 @@ func TestConflatingSubscriber_ConcurrentPush(t *testing.T) {
 	batch := sub.Fetch()
 	if len(batch) != 1 {
 		t.Fatalf("expected 1 latest frame, got %d", len(batch))
+	}
+}
+
+func TestConflatingSubscriber_MultiTopicIndependent(t *testing.T) {
+	metrics := broadcaster.NewCounterMetrics()
+	sub := broadcaster.NewConflatingSubscriber(metrics, "BTC", "ETH")
+	defer sub.Close()
+
+	// Push 5 updates for BTC and 3 updates for ETH
+	for i := 1; i <= 5; i++ {
+		sub.Push("BTC", frame.Text(fmt.Sprintf("BTC-%d", i)))
+	}
+	for i := 1; i <= 3; i++ {
+		sub.Push("ETH", frame.Text(fmt.Sprintf("ETH-%d", i)))
+	}
+
+	batch := sub.Fetch()
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 frames (one for each topic), got %d", len(batch))
+	}
+
+	// Verify both latest states were preserved without cross-topic overwriting
+	results := make(map[string]bool)
+	for _, f := range batch {
+		results[f.String()] = true
+	}
+	if !results["data: BTC-5\n\n"] {
+		t.Errorf("expected BTC latest state %q", "data: BTC-5\n\n")
+	}
+	if !results["data: ETH-3\n\n"] {
+		t.Errorf("expected ETH latest state %q", "data: ETH-3\n\n")
+	}
+
+	// Verify conflations: 4 for BTC + 2 for ETH = 6 total
+	if conflated := metrics.TotalConflated.Load(); conflated != 6 {
+		t.Fatalf("expected 6 total conflated frames, got %d", conflated)
 	}
 }

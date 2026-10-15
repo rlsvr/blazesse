@@ -51,9 +51,36 @@ func (f *Frame) String() string {
 	return string(f.raw)
 }
 
-// FromRaw wraps an already wire-formatted byte slice into a Frame.
+// FromRaw wraps an already wire-formatted byte slice into an immutable Frame.
+// It clones the slice to preserve immutability and extracts the "id:" field if present.
 func FromRaw(raw []byte) *Frame {
-	return &Frame{raw: raw}
+	if raw == nil {
+		return nil
+	}
+	b := bytes.Clone(raw)
+	return &Frame{raw: b, id: extractIDFromRaw(b)}
+}
+
+func extractIDFromRaw(b []byte) string {
+	for len(b) > 0 {
+		var line []byte
+		if idx := bytes.IndexByte(b, '\n'); idx >= 0 {
+			line = b[:idx]
+			b = b[idx+1:]
+		} else {
+			line = b
+			b = nil
+		}
+		line = bytes.TrimRight(line, "\r")
+		if bytes.HasPrefix(line, []byte("id:")) {
+			val := line[3:]
+			if len(val) > 0 && val[0] == ' ' {
+				val = val[1:]
+			}
+			return string(val)
+		}
+	}
+	return ""
 }
 
 // Text creates an SSE frame with only a data payload and no event name.

@@ -13,13 +13,14 @@ import (
 
 // Subscriber represents a connected SSE client's message mailbox.
 type Subscriber interface {
-	// Push enqueues or updates the newest frame in the subscriber's mailbox.
-	Push(f *frame.Frame) bool
+	// Push enqueues or updates the newest frame in the subscriber's mailbox for the specified topic.
+	Push(topic string, f *frame.Frame) bool
 	// Recv returns a notification channel that signals when one or more frames are ready.
 	Recv() <-chan struct{}
 	// Done returns a channel that is closed when the subscriber is closed / disconnected.
 	Done() <-chan struct{}
 	// Fetch atomically retrieves all ready frames and clears the mailbox.
+	// The returned slice is valid until the next invocation of Fetch.
 	Fetch() []*frame.Frame
 	// Close terminates the mailbox.
 	Close()
@@ -27,51 +28,142 @@ type Subscriber interface {
 	IsClosed() bool
 }
 
+func hashTopic64(s string) uint64 {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	var h uint64 = offset64
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= prime64
+	}
+	return h
+}
+
 // ConflatingSubscriber implements a lock-free, zero-allocation mailbox for high-frequency updates.
-// Instead of buffering multiple frames, it holds an atomic pointer to the latest frame.
-// If the client's socket is slow and 50 updates arrive before the socket flushes,
-// the atomic pointer simply overwrites 49 times: the client wakes up once and flushes
-// only the freshest state.
+// For single-topic subscriptions, it uses an atomic pointer swap.
+// For multi-topic subscriptions, it maintains independent per-topic slots so updates on
+// topicB never overwrite unread state from topicA.
 type ConflatingSubscriber struct {
-	latest    atomic.Pointer[frame.Frame]
-	notify    chan struct{} // size 1: coalesces rapid updates into 1 wakeup
-	done      chan struct{} // closed when mailbox is closed
-	closeOnce sync.Once
-	closed    atomic.Bool
-	metrics   MetricsCollector
-	buf       [1]*frame.Frame // reusable slice backing buffer for zero-alloc Fetch()
+	latest          atomic.Pointer[frame.Frame] // single-topic fast path
+	singleTopicHash atomic.Uint64
+	hasMultiple     atomic.Bool
+	slotsMu         sync.RWMutex
+	slots           map[string]*atomic.Pointer[frame.Frame] // per-topic latest state slots
+	notify          chan struct{}                           // size 1: coalesces rapid updates into 1 wakeup
+	done            chan struct{}                           // closed when mailbox is closed
+	closeOnce       sync.Once
+	closed          atomic.Bool
+	metrics         MetricsCollector
+	singleBuf       [1]*frame.Frame // zero-allocation backing array for single topic
+	multiBuf        []*frame.Frame  // reusable slice for multi topic
 }
 
 // NewConflatingSubscriber creates a ConflatingSubscriber.
-func NewConflatingSubscriber(metrics MetricsCollector) *ConflatingSubscriber {
+func NewConflatingSubscriber(metrics MetricsCollector, topics ...string) *ConflatingSubscriber {
 	if metrics == nil {
 		metrics = NoopMetrics{}
 	}
-	return &ConflatingSubscriber{
+	s := &ConflatingSubscriber{
 		notify:  make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		metrics: metrics,
 	}
+
+	if len(topics) > 1 {
+		s.hasMultiple.Store(true)
+		s.slots = make(map[string]*atomic.Pointer[frame.Frame], len(topics))
+		for _, t := range topics {
+			s.slots[t] = &atomic.Pointer[frame.Frame]{}
+		}
+		s.multiBuf = make([]*frame.Frame, 0, len(topics))
+	} else if len(topics) == 1 {
+		s.singleTopicHash.Store(hashTopic64(topics[0]))
+	}
+
+	return s
 }
 
-func (s *ConflatingSubscriber) Push(f *frame.Frame) bool {
+func (s *ConflatingSubscriber) Push(topic string, f *frame.Frame) bool {
 	if s.closed.Load() {
 		return false
 	}
 
-	// Atomically swap in the newest frame
-	old := s.latest.Swap(f)
-	if old != nil {
-		s.metrics.OnFrameConflated("")
+	if !s.hasMultiple.Load() {
+		h := hashTopic64(topic)
+		st := s.singleTopicHash.Load()
+		if st == 0 {
+			s.singleTopicHash.CompareAndSwap(0, h)
+			st = s.singleTopicHash.Load()
+		}
+		if st == h || topic == "" || topic == "*" {
+			old := s.latest.Swap(f)
+			if old != nil {
+				s.metrics.OnFrameConflated(topic)
+			}
+			s.signal()
+			return true
+		}
+		// Multi-topic detected: promote to per-topic slots
+		s.promoteToMulti(topic, f)
+		s.signal()
+		return true
 	}
 
-	// Non-blocking wakeup signal
+	// Multi-topic path
+	s.slotsMu.RLock()
+	slot, ok := s.slots[topic]
+	s.slotsMu.RUnlock()
+
+	if !ok {
+		s.slotsMu.Lock()
+		slot, ok = s.slots[topic]
+		if !ok {
+			slot = &atomic.Pointer[frame.Frame]{}
+			s.slots[topic] = slot
+		}
+		s.slotsMu.Unlock()
+	}
+
+	old := slot.Swap(f)
+	if old != nil {
+		s.metrics.OnFrameConflated(topic)
+	}
+
+	s.signal()
+	return true
+}
+
+func (s *ConflatingSubscriber) signal() {
 	select {
 	case s.notify <- struct{}{}:
 	default:
-		// Already has a pending wakeup; the atomic Swap above conflated in place.
 	}
-	return true
+}
+
+func (s *ConflatingSubscriber) promoteToMulti(topic string, f *frame.Frame) {
+	s.slotsMu.Lock()
+	defer s.slotsMu.Unlock()
+
+	if !s.hasMultiple.Load() {
+		s.slots = make(map[string]*atomic.Pointer[frame.Frame], 4)
+		prev := s.latest.Swap(nil)
+		if prev != nil {
+			prevSlot := &atomic.Pointer[frame.Frame]{}
+			prevSlot.Store(prev)
+			s.slots["_prev"] = prevSlot
+		}
+		newSlot := &atomic.Pointer[frame.Frame]{}
+		newSlot.Store(f)
+		s.slots[topic] = newSlot
+		s.hasMultiple.Store(true)
+	} else {
+		slot, ok := s.slots[topic]
+		if !ok {
+			slot = &atomic.Pointer[frame.Frame]{}
+			s.slots[topic] = slot
+		}
+		slot.Store(f)
+	}
 }
 
 func (s *ConflatingSubscriber) Recv() <-chan struct{} {
@@ -82,21 +174,44 @@ func (s *ConflatingSubscriber) Done() <-chan struct{} {
 	return s.done
 }
 
+// Fetch atomically retrieves all ready frames and clears the mailbox.
+// The returned slice is valid until the next call to Fetch.
 func (s *ConflatingSubscriber) Fetch() []*frame.Frame {
-	// Atomically retrieve the frame and set the pointer back to nil.
-	// Reuses s.buf[:1] to achieve zero-allocations per delivery.
-	f := s.latest.Swap(nil)
-	if f == nil {
+	if !s.hasMultiple.Load() {
+		f := s.latest.Swap(nil)
+		if f == nil {
+			return nil
+		}
+		s.singleBuf[0] = f
+		return s.singleBuf[:1]
+	}
+
+	s.multiBuf = s.multiBuf[:0]
+	s.slotsMu.RLock()
+	defer s.slotsMu.RUnlock()
+
+	for _, slot := range s.slots {
+		f := slot.Swap(nil)
+		if f != nil {
+			s.multiBuf = append(s.multiBuf, f)
+		}
+	}
+
+	if len(s.multiBuf) == 0 {
 		return nil
 	}
-	s.buf[0] = f
-	return s.buf[:1]
+	return s.multiBuf
 }
 
 func (s *ConflatingSubscriber) Close() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		s.latest.Store(nil)
+		s.slotsMu.Lock()
+		for _, slot := range s.slots {
+			slot.Store(nil)
+		}
+		s.slotsMu.Unlock()
 		close(s.done)
 		select {
 		case s.notify <- struct{}{}:
@@ -143,7 +258,7 @@ func NewFIFOSubscriber(capacity int, policy OverflowPolicy, metrics MetricsColle
 	}
 }
 
-func (s *FIFOSubscriber) Push(f *frame.Frame) bool {
+func (s *FIFOSubscriber) Push(topic string, f *frame.Frame) bool {
 	if s.closed.Load() {
 		return false
 	}
@@ -157,24 +272,29 @@ func (s *FIFOSubscriber) Push(f *frame.Frame) bool {
 	}
 
 	// Queue is full: apply overflow policy
-	s.metrics.OnBufferOverflow("")
+	s.metrics.OnBufferOverflow(topic)
 
 	switch s.policy {
 	case OverflowDropNewest:
 		return false
 
 	case OverflowDropOldest:
-		// Evict oldest item to make room
-		select {
-		case <-s.q.Recv():
-		default:
-		}
-		if s.q.TryPush(f) {
+		// Evict oldest item to make room, with bounded retry under multi-publisher contention
+		for attempt := 0; attempt < 3; attempt++ {
+			if s.closed.Load() {
+				return false
+			}
 			select {
-			case s.notify <- struct{}{}:
+			case <-s.q.Recv():
 			default:
 			}
-			return true
+			if s.q.TryPush(f) {
+				select {
+				case s.notify <- struct{}{}:
+				default:
+				}
+				return true
+			}
 		}
 		return false
 

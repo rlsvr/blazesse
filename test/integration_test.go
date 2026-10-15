@@ -1,15 +1,20 @@
 package test_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rlsvr/blazesse"
 	"github.com/rlsvr/blazesse/pkg/broadcaster"
+	"github.com/rlsvr/blazesse/pkg/frame"
 )
 
 // 1. WithHeader and custom headers are preserved and sent by Broadcaster.ServeHTTP.
@@ -218,5 +223,132 @@ func TestIntegration_MaxConnections(t *testing.T) {
 	}
 	if retryAfter := resp2.Header.Get("Retry-After"); retryAfter == "" {
 		t.Fatalf("expected Retry-After header on 429 response")
+	}
+}
+
+// 8. MaxConnections atomic reservation under concurrent burst prevents TOCTOU race.
+func TestIntegration_MaxConnections_ConcurrentBurst(t *testing.T) {
+	const limit = 5
+	const total = 40
+
+	b := blazesse.NewBroadcaster(blazesse.WithMaxConnections(limit))
+	defer func() { _ = b.Close() }()
+
+	srv := httptest.NewServer(b)
+	defer srv.Close()
+
+	var wg sync.WaitGroup
+	var accepted atomic.Int64
+	var rejected atomic.Int64
+	start := make(chan struct{})
+	hold := make(chan struct{})
+
+	for i := 0; i < total; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"?topic=t", nil)
+			if err != nil {
+				return
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+			switch resp.StatusCode {
+			case http.StatusOK:
+				accepted.Add(1)
+				<-hold
+			case http.StatusTooManyRequests:
+				rejected.Add(1)
+			}
+		}()
+	}
+
+	close(start)
+
+	// Wait until all 40 requests have connected (5 accepted) or been rejected (35 rejected)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if accepted.Load() == limit && rejected.Load() == total-limit {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := accepted.Load(); got != limit {
+		t.Fatalf("expected exactly %d accepted connections under burst, got %d", limit, got)
+	}
+	if got := rejected.Load(); got != total-limit {
+		t.Fatalf("expected exactly %d rejected connections, got %d", total-limit, got)
+	}
+
+	// Release held connections
+	close(hold)
+	wg.Wait()
+}
+
+// 9. Replayed events are deduplicated against subscriber's live queue.
+func TestIntegration_ServeHTTP_ReplayAndLiveDeduplication(t *testing.T) {
+	b := blazesse.NewBroadcaster(
+		blazesse.WithReplayBuffer(10),
+		blazesse.WithDeliveryMode(blazesse.DeliveryFIFO),
+	)
+	defer func() { _ = b.Close() }()
+
+	srv := httptest.NewServer(b)
+	defer srv.Close()
+
+	// Seed replay buffer with id-1 and id-2
+	b.Publish("t", frame.Format("ev", "id-1", 0, []byte("d1")))
+	b.Publish("t", frame.Format("ev", "id-2", 0, []byte("d2")))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"?topic=t", nil)
+	req.Header.Set("Last-Event-ID", "id-1")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Reader receives events
+	scanner := bufio.NewScanner(resp.Body)
+	var receivedIDs []string
+	msgCh := make(chan string, 10)
+	go func() {
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "id: ") {
+				msgCh <- strings.TrimPrefix(line, "id: ")
+			}
+		}
+	}()
+
+	// Publish id-3 and id-4 live
+	time.Sleep(20 * time.Millisecond)
+	b.Publish("t", frame.Format("ev", "id-3", 0, []byte("d3")))
+	b.Publish("t", frame.Format("ev", "id-4", 0, []byte("d4")))
+
+	timeout := time.After(2 * time.Second)
+	for len(receivedIDs) < 3 {
+		select {
+		case id := <-msgCh:
+			receivedIDs = append(receivedIDs, id)
+		case <-timeout:
+			t.Fatalf("timeout waiting for events, received so far: %v", receivedIDs)
+		}
+	}
+
+	expected := []string{"id-2", "id-3", "id-4"}
+	for i, exp := range expected {
+		if receivedIDs[i] != exp {
+			t.Fatalf("expected ID %q at index %d, got %q", exp, i, receivedIDs[i])
+		}
 	}
 }

@@ -95,17 +95,17 @@ func (mr *MockSubscriberMockRecorder) IsClosed() *gomock.Call {
 }
 
 // Push mocks base method.
-func (m *MockSubscriber) Push(f *frame.Frame) bool {
+func (m *MockSubscriber) Push(topic string, f *frame.Frame) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Push", f)
+	ret := m.ctrl.Call(m, "Push", topic, f)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // Push indicates an expected call of Push.
-func (mr *MockSubscriberMockRecorder) Push(f any) *gomock.Call {
+func (mr *MockSubscriberMockRecorder) Push(topic, f any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Push", reflect.TypeOf((*MockSubscriber)(nil).Push), f)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Push", reflect.TypeOf((*MockSubscriber)(nil).Push), topic, f)
 }
 
 // Recv mocks base method.

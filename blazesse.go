@@ -61,6 +61,9 @@ type (
 
 	// TopicExtractor extracts subscribed topics from an incoming HTTP request.
 	TopicExtractor = broadcaster.TopicExtractor
+
+	// ReplayMissPolicy defines behavior when a client's Last-Event-ID is not found in the replay buffer.
+	ReplayMissPolicy = broadcaster.ReplayMissPolicy
 )
 
 // RegistryEngine constants
@@ -95,6 +98,15 @@ const (
 
 	// OverflowDisconnect terminates the slow subscriber connection.
 	OverflowDisconnect = broadcaster.OverflowDisconnect
+)
+
+// ReplayMissPolicy constants
+const (
+	// ReplayMissAll (default) replays all available buffered frames when Last-Event-ID is not found.
+	ReplayMissAll = broadcaster.ReplayMissAll
+
+	// ReplayMissNone sends no historical frames when Last-Event-ID is not found.
+	ReplayMissNone = broadcaster.ReplayMissNone
 )
 
 // Frame constructors
@@ -266,4 +278,12 @@ func WithAuthorizeTopics(fn func(r *http.Request, topics []string) error) Option
 
 func WithReplayBuffer(topicCap int) Option {
 	return broadcaster.WithReplayBuffer(topicCap)
+}
+
+func WithReplayMissPolicy(policy ReplayMissPolicy) Option {
+	return broadcaster.WithReplayMissPolicy(policy)
+}
+
+func WithReplayMaxTopics(maxTopics int) Option {
+	return broadcaster.WithReplayMaxTopics(maxTopics)
 }

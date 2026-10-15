@@ -2,6 +2,7 @@ package broadcaster_test
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/rlsvr/blazesse/pkg/broadcaster"
@@ -14,7 +15,7 @@ func TestFIFOSubscriber_PreservesOrder(t *testing.T) {
 	defer sub.Close()
 
 	for i := 1; i <= 50; i++ {
-		sub.Push(frame.Text(fmt.Sprintf("order-%d", i)))
+		sub.Push("orders", frame.Text(fmt.Sprintf("order-%d", i)))
 	}
 
 	batch := sub.Fetch()
@@ -36,7 +37,7 @@ func TestFIFOSubscriber_OverflowDropOldest(t *testing.T) {
 	defer sub.Close()
 
 	for i := 1; i <= 10; i++ {
-		sub.Push(frame.Text(fmt.Sprintf("item-%d", i)))
+		sub.Push("items", frame.Text(fmt.Sprintf("item-%d", i)))
 	}
 
 	batch := sub.Fetch()
@@ -57,13 +58,40 @@ func TestFIFOSubscriber_OverflowDropOldest(t *testing.T) {
 	}
 }
 
+func TestFIFOSubscriber_OverflowDropOldest_Contention(t *testing.T) {
+	metrics := broadcaster.NewCounterMetrics()
+	sub := broadcaster.NewFIFOSubscriber(10, broadcaster.OverflowDropOldest, metrics)
+	defer sub.Close()
+
+	const goroutines = 10
+	const pushes = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < pushes; i++ {
+				sub.Push("contention", frame.Text(fmt.Sprintf("g%d-item%d", id, i)))
+			}
+		}(g)
+	}
+
+	wg.Wait()
+
+	batch := sub.Fetch()
+	if len(batch) != 10 {
+		t.Fatalf("expected exactly 10 frames in buffer after contention, got %d", len(batch))
+	}
+}
+
 func TestFIFOSubscriber_OverflowDropNewest(t *testing.T) {
 	metrics := broadcaster.NewCounterMetrics()
 	sub := broadcaster.NewFIFOSubscriber(5, broadcaster.OverflowDropNewest, metrics)
 	defer sub.Close()
 
 	for i := 1; i <= 10; i++ {
-		sub.Push(frame.Text(fmt.Sprintf("item-%d", i)))
+		sub.Push("items", frame.Text(fmt.Sprintf("item-%d", i)))
 	}
 
 	batch := sub.Fetch()
@@ -86,7 +114,7 @@ func TestFIFOSubscriber_OverflowDisconnect(t *testing.T) {
 	defer sub.Close()
 
 	for i := 1; i <= 5; i++ {
-		if !sub.Push(frame.Text(fmt.Sprintf("item-%d", i))) {
+		if !sub.Push("items", frame.Text(fmt.Sprintf("item-%d", i))) {
 			t.Fatalf("push %d failed unexpectedly", i)
 		}
 	}
@@ -96,7 +124,7 @@ func TestFIFOSubscriber_OverflowDisconnect(t *testing.T) {
 	}
 
 	// 6th push should trigger disconnect
-	delivered := sub.Push(frame.Text("item-6"))
+	delivered := sub.Push("items", frame.Text("item-6"))
 	if delivered {
 		t.Fatal("expected 6th push to fail on overflow")
 	}
@@ -117,7 +145,7 @@ func TestFIFOSubscriber_OverflowDisconnect_WakesDrainingReader(t *testing.T) {
 	s := broadcaster.NewFIFOSubscriber(2, broadcaster.OverflowDisconnect, nil)
 	f := frame.Text("x")
 	for i := 0; i < 5; i++ {
-		s.Push(f)
+		s.Push("items", f)
 	}
 	if !s.IsClosed() {
 		t.Fatal("expected closed")

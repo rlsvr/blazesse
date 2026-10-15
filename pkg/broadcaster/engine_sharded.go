@@ -86,7 +86,7 @@ func (e *shardedMutexEngine) publish(topic string, f *frame.Frame) {
 	s.mu.RLock()
 	subs := s.topics[topic]
 	for client := range subs {
-		client.Push(f)
+		client.Push(topic, f)
 	}
 	s.mu.RUnlock()
 
@@ -102,7 +102,7 @@ func (e *shardedMutexEngine) publishAll(f *frame.Frame) {
 			for client := range subs {
 				if _, ok := seen[client]; !ok {
 					seen[client] = struct{}{}
-					client.Push(f)
+					client.Push("*", f)
 				}
 			}
 		}

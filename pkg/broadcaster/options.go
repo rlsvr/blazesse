@@ -49,6 +49,17 @@ const (
 	OverflowDisconnect
 )
 
+// ReplayMissPolicy defines the behavior when a client's Last-Event-ID is not found in the replay buffer.
+type ReplayMissPolicy uint8
+
+const (
+	// ReplayMissAll (default) replays all available buffered frames when Last-Event-ID is not found.
+	ReplayMissAll ReplayMissPolicy = iota
+
+	// ReplayMissNone sends no historical frames when Last-Event-ID is not found.
+	ReplayMissNone
+)
+
 // TopicExtractor extracts one or more topic strings from an incoming HTTP request.
 type TopicExtractor func(r *http.Request) ([]string, error)
 
@@ -78,6 +89,8 @@ type Options struct {
 	MaxConnections    int
 	AuthorizeTopics   func(r *http.Request, topics []string) error
 	ReplayBufferCap   int
+	ReplayMissPolicy  ReplayMissPolicy
+	ReplayMaxTopics   int
 }
 
 // DefaultOptions returns production-ready default settings.
@@ -105,6 +118,8 @@ func DefaultOptions() Options {
 		MaxConnections:    0, // 0 = unlimited
 		AuthorizeTopics:   nil,
 		ReplayBufferCap:   0, // 0 = disabled
+		ReplayMissPolicy:  ReplayMissAll,
+		ReplayMaxTopics:   10000,
 	}
 }
 
@@ -192,6 +207,9 @@ func NewEngineShardedMutex(opts ...ShardedMutexEngineOption) Option {
 func WithEngine(e RegistryEngine) Option {
 	return func(o *Options) {
 		o.Engine = e
+		if e == EngineLockFree {
+			o.ReconfigWait = true
+		}
 	}
 }
 
@@ -358,6 +376,23 @@ func WithReplayBuffer(topicCap int) Option {
 	return func(o *Options) {
 		if topicCap > 0 {
 			o.ReplayBufferCap = topicCap
+		}
+	}
+}
+
+// WithReplayMissPolicy sets the fallback policy when a reconnecting client's Last-Event-ID is not found in the replay buffer.
+func WithReplayMissPolicy(policy ReplayMissPolicy) Option {
+	return func(o *Options) {
+		o.ReplayMissPolicy = policy
+	}
+}
+
+// WithReplayMaxTopics bounds the maximum number of topic replay rings retained in memory.
+// Once full, the oldest untouched topic buffer is evicted to prevent unbounded memory growth.
+func WithReplayMaxTopics(maxTopics int) Option {
+	return func(o *Options) {
+		if maxTopics > 0 {
+			o.ReplayMaxTopics = maxTopics
 		}
 	}
 }

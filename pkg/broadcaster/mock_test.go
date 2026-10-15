@@ -16,11 +16,11 @@ func TestMockSubscriber(t *testing.T) {
 	sub := mock.NewMockSubscriber(ctrl)
 	testFrame := frame.Text("mock message")
 
-	sub.EXPECT().Push(testFrame).Return(true).Times(1)
+	sub.EXPECT().Push("test.topic", testFrame).Return(true).Times(1)
 	sub.EXPECT().IsClosed().Return(false).Times(1)
 	sub.EXPECT().Close().Times(1)
 
-	if !sub.Push(testFrame) {
+	if !sub.Push("test.topic", testFrame) {
 		t.Fatal("expected Push to succeed on mock")
 	}
 	if sub.IsClosed() {

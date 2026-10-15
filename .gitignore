@@ -9,6 +9,7 @@ bin/
 # Test artifacts & coverage
 *.test
 *.out
+*.txt
 coverage.html
 profile.pprof
 
@@ -18,3 +19,4 @@ profile.pprof
 .vscode/
 *.swp
 *~
+r.md
