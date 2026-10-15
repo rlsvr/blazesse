@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -86,12 +87,22 @@ func JSONWith(event string, v any, marshal func(any) ([]byte, error)) (*Frame, e
 
 // Comment creates an SSE comment frame (": <comment>\n\n"), typically used for keep-alive pings.
 // The browser's EventSource ignores lines starting with a colon.
+// Newlines in the comment are properly prefixed with ": " to prevent SSE injection.
 func Comment(comment string) *Frame {
 	var buf bytes.Buffer
-	buf.Grow(len(comment) + 4)
-	buf.WriteString(": ")
-	buf.WriteString(comment)
-	buf.WriteString("\n\n")
+	buf.Grow(len(comment) + 8)
+
+	// Normalize CRLF / CR to LF
+	comment = strings.ReplaceAll(comment, "\r\n", "\n")
+	comment = strings.ReplaceAll(comment, "\r", "\n")
+
+	lines := strings.Split(comment, "\n")
+	for _, line := range lines {
+		buf.WriteString(": ")
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+	}
+	buf.WriteByte('\n')
 	return &Frame{raw: buf.Bytes()}
 }
 
@@ -102,11 +113,25 @@ func Ping() *Frame {
 	return pingFrame
 }
 
+var crlfReplacer = strings.NewReplacer("\r", "", "\n", "")
+
+// sanitizeField strips \r and \n from field values like event and id to prevent header injection.
+func sanitizeField(v string) string {
+	if strings.ContainsAny(v, "\r\n") {
+		return crlfReplacer.Replace(v)
+	}
+	return v
+}
+
 // Format constructs a W3C SSE specification-compliant wire frame.
 //
-// If data contains newlines ('\n'), it correctly prefixes each line with "data: "
-// as required by the Server-Sent Events standard.
+// Per the WHATWG SSE standard:
+// - Lines in data are delimited by CRLF ('\r\n'), LF ('\n'), or CR ('\r'). Each line is prefixed with "data: ".
+// - Event names and IDs are sanitized to prevent SSE field/event injection.
 func Format(event, id string, retry time.Duration, data []byte) *Frame {
+	event = sanitizeField(event)
+	id = sanitizeField(id)
+
 	// Pre-estimate buffer size to minimize re-allocations
 	estSize := len(data) + 16
 	if event != "" {
@@ -140,29 +165,40 @@ func Format(event, id string, retry time.Duration, data []byte) *Frame {
 		buf.WriteByte('\n')
 	}
 
-	if len(data) > 0 {
-		// Handle multiline data per W3C SSE specification
-		start := 0
-		for i := 0; i < len(data); i++ {
-			if data[i] == '\n' {
-				buf.WriteString("data: ")
-				buf.Write(data[start:i])
-				buf.WriteByte('\n')
-				start = i + 1
-			}
-		}
-		if start < len(data) {
-			buf.WriteString("data: ")
-			buf.Write(data[start:])
-			buf.WriteByte('\n')
-		} else if len(data) > 0 && data[len(data)-1] == '\n' {
-			// Trailing newline in data requires empty data field
-			buf.WriteString("data: \n")
-		}
-	} else {
+	writeData(&buf, data)
+	buf.WriteByte('\n')
+
+	return &Frame{raw: buf.Bytes()}
+}
+
+func writeData(buf *bytes.Buffer, data []byte) {
+	if len(data) == 0 {
 		buf.WriteString("data: \n")
+		return
 	}
 
-	buf.WriteByte('\n')
-	return &Frame{raw: buf.Bytes()}
+	start := 0
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if c == '\n' || c == '\r' {
+			buf.WriteString("data: ")
+			buf.Write(data[start:i])
+			buf.WriteByte('\n')
+
+			// Handle \r\n as a single line delimiter
+			if c == '\r' && i+1 < len(data) && data[i+1] == '\n' {
+				i++
+			}
+			start = i + 1
+		}
+	}
+
+	if start < len(data) {
+		buf.WriteString("data: ")
+		buf.Write(data[start:])
+		buf.WriteByte('\n')
+	} else if len(data) > 0 && (data[len(data)-1] == '\n' || data[len(data)-1] == '\r') {
+		// Trailing newline in data requires an empty data line per WHATWG spec
+		buf.WriteString("data: \n")
+	}
 }

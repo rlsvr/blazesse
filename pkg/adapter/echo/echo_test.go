@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+
 	"github.com/rlsvr/blazesse"
 	blazesseEcho "github.com/rlsvr/blazesse/pkg/adapter/echo"
 )
 
 func TestEcho_Upgrade(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/events", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -24,7 +25,7 @@ func TestEcho_Upgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected upgrade error: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if err := stream.SendText("hello echo"); err != nil {
 		t.Fatalf("unexpected send error: %v", err)
@@ -45,7 +46,7 @@ func TestEcho_Handler(t *testing.T) {
 		blazesse.WithHeartbeat(0, 0),
 		blazesse.WithDeliveryMode(blazesse.DeliveryConflated),
 	)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	e := echo.New()
 	e.GET("/tickers", blazesseEcho.Handler(b))
@@ -53,7 +54,7 @@ func TestEcho_Handler(t *testing.T) {
 	reqCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	req := httptest.NewRequest(http.MethodGet, "/tickers?topic=BTC", nil).WithContext(reqCtx)
+	req := httptest.NewRequestWithContext(reqCtx, http.MethodGet, "/tickers?topic=BTC", nil)
 	rec := httptest.NewRecorder()
 
 	done := make(chan struct{})

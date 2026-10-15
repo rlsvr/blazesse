@@ -9,7 +9,7 @@
 //
 //  2. 1-to-N Broadcaster: Ultra-high-throughput pub/sub engine (blazesse.NewBroadcaster)
 //     with cache-line padded topic shards, conflated (lossy-latest) mailboxes, and
-//     lossless FIFO queues powered by github.com/rlsvr/hirnok. Built to handle 50,000+
+//     lossless FIFO queues powered by github.com/rlsvr/inas. Built to handle 50,000+
 //     concurrent connections with zero allocations per subscriber.
 package blazesse
 

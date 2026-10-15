@@ -22,7 +22,7 @@ func TestLockFree_PubSub_FIFO(t *testing.T) {
 		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryFIFO),
 	)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	sub, unsub := b.SubscribeMulti([]string{"topicA", "topicB"})
 	defer unsub()
@@ -70,7 +70,7 @@ func TestLockFree_PubSub_Conflated(t *testing.T) {
 		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryConflated),
 	)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	sub, unsub := b.Subscribe("price_feed")
 	defer unsub()
@@ -100,7 +100,7 @@ func TestLockFree_PublishAll(t *testing.T) {
 		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryFIFO),
 	)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	sub1, unsub1 := b.Subscribe("topic1")
 	defer unsub1()
@@ -129,7 +129,7 @@ func TestLockFree_ConcurrentPublishAndViewSwitching(t *testing.T) {
 		),
 		broadcaster.WithDeliveryMode(broadcaster.DeliveryFIFO),
 	)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -192,7 +192,7 @@ func TestFacade_EngineLockFree(t *testing.T) {
 			blazesse.WithReconfigWait(true),
 		),
 	)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	sub, unsub := b.Subscribe("facade_topic")
 	defer unsub()
@@ -211,7 +211,7 @@ func TestFacade_EngineShardedMutex(t *testing.T) {
 			blazesse.WithEngineShards(32),
 		),
 	)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	sub, unsub := b.Subscribe("sharded_topic")
 	defer unsub()
@@ -223,4 +223,3 @@ func TestFacade_EngineShardedMutex(t *testing.T) {
 		t.Fatalf("unexpected batch: %v", batch)
 	}
 }
-

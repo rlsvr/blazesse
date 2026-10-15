@@ -63,16 +63,14 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...Option) (*Stream, e
 	// Commit headers immediately with a write deadline
 	_ = rc.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
 	if err := rc.Flush(); err != nil {
-		if errors.Is(err, http.ErrNotSupported) {
-			// Fallback check for standard Flusher interface
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			} else {
-				return nil, ErrNotFlusher
-			}
-		} else {
+		if !errors.Is(err, http.ErrNotSupported) {
 			return nil, err
 		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return nil, ErrNotFlusher
+		}
+		flusher.Flush()
 	}
 
 	var pingBytes []byte
@@ -231,6 +229,7 @@ func (s *Stream) closeLocked() error {
 func (s *Stream) heartbeatLoop() {
 	var jitter time.Duration
 	if s.opts.PingJitter > 0 {
+		//nolint:gosec // weak PRNG is sufficient and faster for heartbeat jitter
 		jitter = time.Duration(rand.Int64N(s.opts.PingJitter.Nanoseconds()))
 	}
 	interval := s.opts.PingInterval + jitter

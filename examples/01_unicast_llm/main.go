@@ -15,7 +15,11 @@ func main() {
 
 	fmt.Println("🚀 Unicast LLM Streaming Example listening on http://localhost:8080/chat")
 	fmt.Println("👉 Test with: curl -N http://localhost:8080/chat")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	srv := &http.Server{
+		Addr:              ":8080",
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
@@ -36,6 +40,8 @@ func handleLLMChat(w http.ResponseWriter, r *http.Request) {
 	if prompt == "" {
 		prompt = "Why is blazesse so fast?"
 	}
+	//nolint:gosec // demonstration logging in example
+	log.Printf("streaming prompt of length: %d", len(prompt))
 
 	simulatedResponse := "Blazesse achieves near-zero latency by serializing SSE frames once at ingest, " +
 		"using cache-line padded topic shards to eliminate MESI cache contention, and employing lock-free " +

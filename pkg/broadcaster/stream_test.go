@@ -2,6 +2,7 @@ package broadcaster_test
 
 import (
 	"bufio"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,11 @@ func TestStream_UpgradeAndSend(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resp, err := http.Get(server.URL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -77,7 +82,11 @@ func TestStream_BatchSend(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resp, err := http.Get(server.URL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}

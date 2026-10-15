@@ -54,47 +54,47 @@ type TopicExtractor func(r *http.Request) ([]string, error)
 
 // Options holds configuration for Broadcaster and Stream.
 type Options struct {
-	Engine           RegistryEngine
-	ReconfigInterval time.Duration
+	Engine            RegistryEngine
+	ReconfigInterval  time.Duration
 	ReconfigBatchSize int
-	ReconfigWait     bool
-	Shards           int
-	WriteTimeout     time.Duration
-	PingInterval     time.Duration
-	PingJitter       time.Duration
-	PingComment      string
-	DeliveryMode     DeliveryMode
-	FIFOBufferSize   int
-	OverflowPolicy   OverflowPolicy
-	AsyncWorkers     int
-	AsyncQueueCap    int
-	TopicExtractor   TopicExtractor
-	Metrics          MetricsCollector
-	OnConnect        func(r *http.Request) error
-	OnDisconnect     func(r *http.Request, topics []string)
-	CustomHeaders    map[string]string
+	ReconfigWait      bool
+	Shards            int
+	WriteTimeout      time.Duration
+	PingInterval      time.Duration
+	PingJitter        time.Duration
+	PingComment       string
+	DeliveryMode      DeliveryMode
+	FIFOBufferSize    int
+	OverflowPolicy    OverflowPolicy
+	AsyncWorkers      int
+	AsyncQueueCap     int
+	TopicExtractor    TopicExtractor
+	Metrics           MetricsCollector
+	OnConnect         func(r *http.Request) error
+	OnDisconnect      func(r *http.Request, topics []string)
+	CustomHeaders     map[string]string
 }
 
 // DefaultOptions returns production-ready default settings.
 func DefaultOptions() Options {
 	return Options{
-		Engine:           EngineShardedMutex,
-		ReconfigInterval: 15 * time.Millisecond,
+		Engine:            EngineShardedMutex,
+		ReconfigInterval:  15 * time.Millisecond,
 		ReconfigBatchSize: 128,
-		ReconfigWait:     false,
-		Shards:           64,
-		WriteTimeout:     3 * time.Second,
-		PingInterval:     20 * time.Second,
-		PingJitter:       10 * time.Second,
-		PingComment:      "ping",
-		DeliveryMode:     DeliveryConflated,
-		FIFOBufferSize:   512,
-		OverflowPolicy:   OverflowDropOldest,
-		AsyncWorkers:     0, // synchronous fanout by default
-		AsyncQueueCap:    10000,
-		TopicExtractor:   DefaultTopicExtractor,
-		Metrics:          NoopMetrics{},
-		CustomHeaders:    make(map[string]string),
+		ReconfigWait:      false,
+		Shards:            64,
+		WriteTimeout:      3 * time.Second,
+		PingInterval:      20 * time.Second,
+		PingJitter:        10 * time.Second,
+		PingComment:       "ping",
+		DeliveryMode:      DeliveryConflated,
+		FIFOBufferSize:    512,
+		OverflowPolicy:    OverflowDropOldest,
+		AsyncWorkers:      0, // synchronous fanout by default
+		AsyncQueueCap:     10000,
+		TopicExtractor:    DefaultTopicExtractor,
+		Metrics:           NoopMetrics{},
+		CustomHeaders:     make(map[string]string),
 	}
 }
 
@@ -142,6 +142,7 @@ func WithReconfigWait(wait bool) LockFreeEngineOption {
 func NewEngineLockFree(opts ...LockFreeEngineOption) Option {
 	return func(o *Options) {
 		o.Engine = EngineLockFree
+		o.ReconfigWait = true
 		for _, opt := range opts {
 			opt(o)
 		}

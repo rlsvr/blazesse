@@ -47,6 +47,14 @@ func DefaultTopicExtractor(r *http.Request) ([]string, error) {
 
 // ServeHTTP implements http.Handler, enabling Broadcaster to be mounted directly into routers.
 func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if b.closed.Load() {
+		http.Error(w, ErrBroadcasterClosed.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	b.handlersWg.Add(1)
+	defer b.handlersWg.Done()
+
 	// Extract topics from request
 	topics, err := b.opts.TopicExtractor(r)
 	if err != nil {
@@ -62,11 +70,17 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Upgrade HTTP connection to SSE stream
-	stream, err := Upgrade(w, r,
+	// Upgrade HTTP connection to SSE stream with all configured options
+	streamOpts := []Option{
 		WithWriteTimeout(b.opts.WriteTimeout),
 		WithHeartbeat(b.opts.PingInterval, b.opts.PingJitter),
-	)
+		WithPingComment(b.opts.PingComment),
+	}
+	for k, v := range b.opts.CustomHeaders {
+		streamOpts = append(streamOpts, WithHeader(k, v))
+	}
+
+	stream, err := Upgrade(w, r, streamOpts...)
 	if err != nil {
 		return
 	}
@@ -88,6 +102,10 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-stream.Done():
 			return
 
+		case <-sub.Done():
+			_ = stream.SendBatch(sub.Fetch())
+			return
+
 		case <-sub.Recv():
 			batch := sub.Fetch()
 			if len(batch) == 0 {
@@ -99,7 +117,9 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			// Single flush syscall for all batched frames
 			if err := stream.SendBatch(batch); err != nil {
-				b.opts.Metrics.OnWriteTimeout(topics[0])
+				if len(topics) > 0 {
+					b.opts.Metrics.OnWriteTimeout(topics[0])
+				}
 				return
 			}
 		}

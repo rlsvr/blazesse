@@ -44,7 +44,11 @@ func main() {
 	fmt.Println("🚀 Lossless FIFO Chat Broadcaster running on http://localhost:8082")
 	fmt.Println("👉 Connect SSE:  curl -N 'http://localhost:8082/chat?topic=general'")
 	fmt.Println("👉 Send Message: curl -X POST 'http://localhost:8082/send?topic=general&user=alice&msg=Hello+World'")
-	if err := http.ListenAndServe(":8082", nil); err != nil {
+	srv := &http.Server{
+		Addr:              ":8082",
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }

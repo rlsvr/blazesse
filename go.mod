@@ -2,10 +2,12 @@ module github.com/rlsvr/blazesse
 
 go 1.26.1
 
-require github.com/rlsvr/inas v0.0.0-20261015074228-807abee7f5f4
+require (
+	github.com/labstack/echo/v4 v4.16.0
+	github.com/rlsvr/inas v0.0.0-20261015074228-807abee7f5f4
+)
 
 require (
-	github.com/labstack/echo/v4 v4.16.0 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect

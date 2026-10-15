@@ -110,6 +110,37 @@ func TestFrame_JSON(t *testing.T) {
 	}
 }
 
+func TestFrame_InjectionPrevention(t *testing.T) {
+	// 1. CR in data cannot forge fields
+	userMsg := "hi\revent: admin\rdata: pwned\r\r"
+	f := frame.Event("message", userMsg)
+	expected := "event: message\ndata: hi\ndata: event: admin\ndata: data: pwned\ndata: \ndata: \n\n"
+	if f.String() != expected {
+		t.Fatalf("expected:\n%q\ngot:\n%q", expected, f.String())
+	}
+
+	// 2. LF / CR in event name is stripped
+	f2 := frame.Event("x\ndata: injected\n\nevent: evil", "ok")
+	expected2 := "event: xdata: injectedevent: evil\ndata: ok\n\n"
+	if f2.String() != expected2 {
+		t.Fatalf("expected:\n%q\ngot:\n%q", expected2, f2.String())
+	}
+
+	// 3. CRLF text is correctly split into lines without creating extra events
+	f3 := frame.Text("line1\r\nline2")
+	expected3 := "data: line1\ndata: line2\n\n"
+	if f3.String() != expected3 {
+		t.Fatalf("expected:\n%q\ngot:\n%q", expected3, f3.String())
+	}
+
+	// 4. Multiline comment properly prefixes every line with ": "
+	f4 := frame.Comment("comment1\r\nevent: injected\ncomment2")
+	expected4 := ": comment1\n: event: injected\n: comment2\n\n"
+	if f4.String() != expected4 {
+		t.Fatalf("expected:\n%q\ngot:\n%q", expected4, f4.String())
+	}
+}
+
 func BenchmarkFrame_Text(b *testing.B) {
 	payload := `{"symbol":"BTC-USD","price":68450.25,"volume":1420.5}`
 	b.ReportAllocs()

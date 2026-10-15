@@ -46,7 +46,11 @@ func main() {
 	fmt.Println("🚀 Conflated Market Ticker Broadcaster running on http://localhost:8081/tickers")
 	fmt.Println("👉 Subscribe single topic: curl -N 'http://localhost:8081/tickers?topic=crypto.BTC'")
 	fmt.Println("👉 Subscribe multi-topics: curl -N 'http://localhost:8081/tickers?topics=crypto.BTC,crypto.ETH'")
-	if err := http.ListenAndServe(":8081", nil); err != nil {
+	srv := &http.Server{
+		Addr:              ":8081",
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
@@ -65,7 +69,9 @@ func simulateMarketFeed(b *blazesse.Broadcaster) {
 	seq := 0
 	for range ticker.C {
 		seq++
+		//nolint:gosec // weak PRNG is sufficient for simulated market feed
 		sym := symbols[rand.IntN(len(symbols))]
+		//nolint:gosec // weak PRNG is sufficient for simulated market feed
 		delta := (rand.Float64() - 0.49) * 5.0
 		prices[sym] += delta
 

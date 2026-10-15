@@ -11,7 +11,7 @@ import (
 type shard struct {
 	mu     sync.RWMutex
 	topics map[string]map[Subscriber]struct{}
-	_pad   [64]byte // ensures separation across CPU cache lines
+	_      [64]byte // ensures separation across CPU cache lines
 }
 
 // shardedMutexEngine partitions topics across 64 CPU-padded RWMutex shards.
@@ -27,7 +27,7 @@ func newShardedMutexEngine(opts Options) *shardedMutexEngine {
 	e := &shardedMutexEngine{
 		opts:      opts,
 		shards:    make([]shard, opts.Shards),
-		shardMask: uint32(opts.Shards - 1),
+		shardMask: uint32(opts.Shards - 1), //nolint:gosec // opts.Shards is verified power of two > 0
 	}
 	for i := range e.shards {
 		e.shards[i].topics = make(map[string]map[Subscriber]struct{})

@@ -2,6 +2,7 @@ package broadcaster_test
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -112,26 +113,28 @@ func TestBroadcaster_ConcurrentPubSubRace(t *testing.T) {
 
 	// Publisher goroutines
 	for g := 0; g < goroutines; g++ {
-		go func(id int) {
+		go func() {
 			defer wg.Done()
 			for i := 0; i < iterations; i++ {
+				//nolint:gosec // pseudo-random generator is sufficient for race test
 				topic := fmt.Sprintf("topic-%d", rand.IntN(20))
 				b.Publish(topic, frame.Text(fmt.Sprintf("val-%d", i)))
 			}
-		}(g)
+		}()
 	}
 
 	// Subscriber goroutines (subscribe, fetch, unsubscribe)
 	for g := 0; g < goroutines; g++ {
-		go func(id int) {
+		go func() {
 			defer wg.Done()
 			for i := 0; i < iterations/2; i++ {
+				//nolint:gosec // pseudo-random generator is sufficient for race test
 				topic := fmt.Sprintf("topic-%d", rand.IntN(20))
 				sub, unsub := b.Subscribe(topic)
 				_ = sub.Fetch()
 				unsub()
 			}
-		}(g)
+		}()
 	}
 
 	wg.Wait()
@@ -145,7 +148,13 @@ func TestBroadcaster_ServeHTTP(t *testing.T) {
 	defer server.Close()
 
 	// Connect SSE client
-	resp, err := http.Get(server.URL + "?topic=market-feed")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"?topic=market-feed", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("HTTP request failed: %v", err)
 	}

@@ -3,11 +3,12 @@ package broadcaster
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 
-	"github.com/rlsvr/blazesse/pkg/frame"
 	"github.com/rlsvr/inas/pkg/queue"
-	"github.com/rlsvr/inas/pkg/worker"
+
+	"github.com/rlsvr/blazesse/pkg/frame"
 )
 
 var (
@@ -18,6 +19,10 @@ var (
 type asyncJob struct {
 	topic string
 	frame *frame.Frame
+}
+
+type asyncShard struct {
+	q *queue.Queue[asyncJob]
 }
 
 // engine abstracts internal topic subscription storage and lookup strategies.
@@ -33,14 +38,15 @@ type engine interface {
 // It delegates topic routing to a pluggable engine strategy (sharded mutex or lock-free CoW snapshot)
 // while providing unified HTTP upgrading, mailbox lifecycle, metrics, and async fanout.
 type Broadcaster struct {
-	opts       Options
-	engine     engine
-	subCount   atomic.Int64
-	closed     atomic.Bool
-	asyncQueue *queue.Queue[asyncJob]
-	asyncPool  *worker.Pool
-	ctx        context.Context
-	cancel     context.CancelFunc
+	opts        Options
+	engine      engine
+	subCount    atomic.Int64
+	closed      atomic.Bool
+	asyncShards []*asyncShard
+	asyncWg     sync.WaitGroup
+	handlersWg  sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // New creates and initializes a Broadcaster with the provided options.
@@ -63,12 +69,31 @@ func New(opts ...Option) *Broadcaster {
 		b.engine = newShardedMutexEngine(options)
 	}
 
-	// Initialize decoupled async fanout worker pool if configured
+	// Initialize sharded async workers to guarantee per-topic FIFO ordering
 	if options.AsyncWorkers > 0 {
-		b.asyncQueue = queue.New[asyncJob](options.AsyncQueueCap)
-		b.asyncPool = worker.Run(ctx, options.AsyncWorkers, b.asyncQueue, func(_ context.Context, job asyncJob) {
-			b.publishSync(job.topic, job.frame)
-		})
+		workers := options.AsyncWorkers
+		b.asyncShards = make([]*asyncShard, workers)
+		shardCap := options.AsyncQueueCap / workers
+		if shardCap <= 0 {
+			shardCap = 256
+		}
+		for i := 0; i < workers; i++ {
+			shard := &asyncShard{
+				q: queue.New[asyncJob](shardCap),
+			}
+			b.asyncShards[i] = shard
+			b.asyncWg.Add(1)
+			go func(s *asyncShard) {
+				defer b.asyncWg.Done()
+				for {
+					job, err := s.q.Pop(ctx)
+					if err != nil {
+						return
+					}
+					b.publishSync(job.topic, job.frame)
+				}
+			}(shard)
+		}
 	}
 
 	return b
@@ -100,25 +125,24 @@ func (b *Broadcaster) Subscribe(topic string) (Subscriber, func()) {
 	return b.SubscribeMulti([]string{topic})
 }
 
-// SubscribeMulti subscribes a new client to multiple topics across shards or into the lock-free snapshot.
+// SubscribeMulti subscribes a new client to multiple topics across shards.
 func (b *Broadcaster) SubscribeMulti(topics []string) (Subscriber, func()) {
 	sub := b.NewSubscriber()
 	if b.closed.Load() {
+		sub.Close()
 		return sub, func() {}
 	}
 
-	engineUnsub := b.engine.subscribe(topics, sub)
+	unsub := b.engine.subscribe(topics, sub)
 	b.subCount.Add(1)
 
-	var unsubOnce atomic.Bool
-	unsubscribe := func() {
-		if unsubOnce.CompareAndSwap(false, true) {
-			engineUnsub()
+	var unsubOnce sync.Once
+	return sub, func() {
+		unsubOnce.Do(func() {
+			unsub()
 			b.subCount.Add(-1)
-		}
+		})
 	}
-
-	return sub, unsubscribe
 }
 
 // Publish fans out an immutable Frame across all subscribers of the specified topic.
@@ -128,9 +152,12 @@ func (b *Broadcaster) Publish(topic string, f *frame.Frame) {
 		return
 	}
 
-	if b.asyncQueue != nil {
-		// Asynchronous decoupled publish
-		_ = b.asyncQueue.TryPush(asyncJob{topic: topic, frame: f})
+	if n := len(b.asyncShards); n > 0 {
+		//nolint:gosec // n is bounded by configured worker count
+		shardIdx := hashTopic(topic) % uint32(n)
+		if !b.asyncShards[shardIdx].q.TryPush(asyncJob{topic: topic, frame: f}) {
+			b.opts.Metrics.OnBufferOverflow(topic)
+		}
 		return
 	}
 
@@ -159,20 +186,24 @@ func (b *Broadcaster) TotalSubscribers() int {
 	return int(b.subCount.Load())
 }
 
-// Close gracefully closes the broadcaster and any async background workers.
+// Close gracefully closes the broadcaster and waits for all active HTTP handlers to exit.
 func (b *Broadcaster) Close() error {
 	if b.closed.Swap(true) {
 		return nil
 	}
 	b.cancel()
 
-	if b.asyncQueue != nil {
-		b.asyncQueue.Close()
+	// Drain and wait for async shards
+	for _, s := range b.asyncShards {
+		s.q.Close()
 	}
-	if b.asyncPool != nil {
-		_ = b.asyncPool.Wait(context.Background())
-	}
+	b.asyncWg.Wait()
 
+	// Close engine and all subscriber mailboxes
 	b.engine.close()
+
+	// Wait for all in-flight ServeHTTP handlers to terminate
+	b.handlersWg.Wait()
+
 	return nil
 }

@@ -1,10 +1,12 @@
 package broadcaster
 
 import (
+	"sync"
 	"sync/atomic"
 
-	"github.com/rlsvr/blazesse/pkg/frame"
 	"github.com/rlsvr/inas/pkg/queue"
+
+	"github.com/rlsvr/blazesse/pkg/frame"
 )
 
 // Subscriber represents a connected SSE client's message mailbox.
@@ -13,6 +15,8 @@ type Subscriber interface {
 	Push(f *frame.Frame) bool
 	// Recv returns a notification channel that signals when one or more frames are ready.
 	Recv() <-chan struct{}
+	// Done returns a channel that is closed when the subscriber is closed / disconnected.
+	Done() <-chan struct{}
 	// Fetch atomically retrieves all ready frames and clears the mailbox.
 	Fetch() []*frame.Frame
 	// Close terminates the mailbox.
@@ -27,10 +31,12 @@ type Subscriber interface {
 // the atomic pointer simply overwrites 49 times: the client wakes up once and flushes
 // only the freshest state.
 type ConflatingSubscriber struct {
-	latest  atomic.Pointer[frame.Frame]
-	notify  chan struct{} // size 1: coalesces rapid updates into 1 wakeup
-	closed  atomic.Bool
-	metrics MetricsCollector
+	latest    atomic.Pointer[frame.Frame]
+	notify    chan struct{} // size 1: coalesces rapid updates into 1 wakeup
+	done      chan struct{} // closed when mailbox is closed
+	closeOnce sync.Once
+	closed    atomic.Bool
+	metrics   MetricsCollector
 }
 
 // NewConflatingSubscriber creates a ConflatingSubscriber.
@@ -40,6 +46,7 @@ func NewConflatingSubscriber(metrics MetricsCollector) *ConflatingSubscriber {
 	}
 	return &ConflatingSubscriber{
 		notify:  make(chan struct{}, 1),
+		done:    make(chan struct{}),
 		metrics: metrics,
 	}
 }
@@ -68,6 +75,10 @@ func (s *ConflatingSubscriber) Recv() <-chan struct{} {
 	return s.notify
 }
 
+func (s *ConflatingSubscriber) Done() <-chan struct{} {
+	return s.done
+}
+
 func (s *ConflatingSubscriber) Fetch() []*frame.Frame {
 	// Atomically retrieve the frame and set the pointer back to nil.
 	// This immediately frees the reference so the GC can reclaim the Frame.
@@ -79,23 +90,30 @@ func (s *ConflatingSubscriber) Fetch() []*frame.Frame {
 }
 
 func (s *ConflatingSubscriber) Close() {
-	if s.closed.Swap(true) {
-		return
-	}
-	s.latest.Store(nil)
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		s.latest.Store(nil)
+		close(s.done)
+		select {
+		case s.notify <- struct{}{}:
+		default:
+		}
+	})
 }
 
 func (s *ConflatingSubscriber) IsClosed() bool {
 	return s.closed.Load()
 }
 
-// FIFOSubscriber implements an ordered, bounded mailbox powered by github.com/rlsvr/hirnok/pkg/queue.
+// FIFOSubscriber implements an ordered, bounded mailbox powered by github.com/rlsvr/inas/pkg/queue.
 type FIFOSubscriber struct {
-	q       *queue.Queue[*frame.Frame]
-	notify  chan struct{}
-	policy  OverflowPolicy
-	closed  atomic.Bool
-	metrics MetricsCollector
+	q         *queue.Queue[*frame.Frame]
+	notify    chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
+	policy    OverflowPolicy
+	closed    atomic.Bool
+	metrics   MetricsCollector
 }
 
 // NewFIFOSubscriber creates a FIFOSubscriber with bounded queue capacity and overflow policy.
@@ -109,6 +127,7 @@ func NewFIFOSubscriber(capacity int, policy OverflowPolicy, metrics MetricsColle
 	return &FIFOSubscriber{
 		q:       queue.New[*frame.Frame](capacity),
 		notify:  make(chan struct{}, 1),
+		done:    make(chan struct{}),
 		policy:  policy,
 		metrics: metrics,
 	}
@@ -160,6 +179,10 @@ func (s *FIFOSubscriber) Recv() <-chan struct{} {
 	return s.notify
 }
 
+func (s *FIFOSubscriber) Done() <-chan struct{} {
+	return s.done
+}
+
 func (s *FIFOSubscriber) Fetch() []*frame.Frame {
 	var batch []*frame.Frame
 	for {
@@ -173,10 +196,15 @@ func (s *FIFOSubscriber) Fetch() []*frame.Frame {
 }
 
 func (s *FIFOSubscriber) Close() {
-	if s.closed.Swap(true) {
-		return
-	}
-	s.q.Close()
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		s.q.Close()
+		close(s.done)
+		select {
+		case s.notify <- struct{}{}:
+		default:
+		}
+	})
 }
 
 func (s *FIFOSubscriber) IsClosed() bool {

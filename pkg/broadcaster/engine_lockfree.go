@@ -73,9 +73,15 @@ func (e *lockFreeEngine) subscribe(topics []string, sub Subscriber) func() {
 	select {
 	case e.reconfigCh <- reconfigReq{op: opSub, topics: cleanTopics, sub: sub, done: done}:
 		if done != nil {
-			<-done
+			select {
+			case <-done:
+			case <-e.ctx.Done():
+				sub.Close()
+				return func() {}
+			}
 		}
 	case <-e.ctx.Done():
+		sub.Close()
 		return func() {}
 	}
 
@@ -94,7 +100,10 @@ func (e *lockFreeEngine) subscribe(topics []string, sub Subscriber) func() {
 			select {
 			case e.reconfigCh <- reconfigReq{op: opUnsub, topics: cleanTopics, sub: sub, done: unsubDone}:
 				if unsubDone != nil {
-					<-unsubDone
+					select {
+					case <-unsubDone:
+					case <-e.ctx.Done():
+					}
 				}
 			case <-e.ctx.Done():
 			}
@@ -162,7 +171,23 @@ func (e *lockFreeEngine) runReconfigActor() {
 	for {
 		select {
 		case <-e.ctx.Done():
-			return
+			// Cleanly drain in-flight batch and queued requests so no callers deadlock
+			for _, req := range batch {
+				if req.done != nil {
+					close(req.done)
+				}
+			}
+			for {
+				select {
+				case req := <-e.reconfigCh:
+					if req.done != nil {
+						close(req.done)
+					}
+				default:
+					return
+				}
+			}
+
 		case req := <-e.reconfigCh:
 			batch = append(batch, req)
 			if len(batch) >= batchCap {
@@ -220,16 +245,18 @@ func (e *lockFreeEngine) applyReconfigBatch(batch []reconfigReq) {
 	for _, req := range batch {
 		switch req.op {
 		case opSub:
-			for _, t := range req.topics {
-				cloneTopicIfNeeded(t)
-				nextTopics[t][req.sub] = struct{}{}
+			for _, topic := range req.topics {
+				cloneTopicIfNeeded(topic)
+				nextTopics[topic][req.sub] = struct{}{}
 			}
 		case opUnsub:
-			for _, t := range req.topics {
-				cloneTopicIfNeeded(t)
-				delete(nextTopics[t], req.sub)
-				if len(nextTopics[t]) == 0 {
-					delete(nextTopics, t)
+			for _, topic := range req.topics {
+				if nextTopics[topic] != nil {
+					cloneTopicIfNeeded(topic)
+					delete(nextTopics[topic], req.sub)
+					if len(nextTopics[topic]) == 0 {
+						delete(nextTopics, topic)
+					}
 				}
 			}
 		}
