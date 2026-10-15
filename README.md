@@ -3,6 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/rlsvr/blazesse.svg)](https://pkg.go.dev/github.com/rlsvr/blazesse)
 [![CI](https://github.com/rlsvr/blazesse/actions/workflows/ci.yml/badge.svg)](https://github.com/rlsvr/blazesse/actions/workflows/ci.yml)
 [![golangci-lint](https://img.shields.io/badge/golangci--lint-passing-brightgreen?logo=go)](https://github.com/rlsvr/blazesse/actions/workflows/ci.yml)
+[![govulncheck](https://img.shields.io/badge/govulncheck-passing-brightgreen?logo=go)](https://github.com/rlsvr/blazesse/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 **`blazesse`** is an ultra-high-throughput, zero-allocation Server-Sent Events (SSE) toolkit for Go.
