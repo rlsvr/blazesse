@@ -7,6 +7,7 @@ package frame
 
 import (
 	"bytes"
+	"encoding/json"
 	"strconv"
 	"time"
 )
@@ -59,6 +60,28 @@ func Event(event, data string) *Frame {
 // Bytes creates an SSE frame with an event name and raw byte slice payload.
 func Bytes(event string, data []byte) *Frame {
 	return Format(event, "", 0, data)
+}
+
+// JSON formats an SSE frame with an event name and JSON-encoded payload.
+func JSON(event string, v any) (*Frame, error) {
+	return JSONWith(event, v, json.Marshal)
+}
+
+// JSONText formats an SSE data frame without an event name using JSON encoding.
+func JSONText(v any) (*Frame, error) {
+	return JSONWith("", v, json.Marshal)
+}
+
+// JSONWith formats a JSON frame using a user-provided marshaler function.
+func JSONWith(event string, v any, marshal func(any) ([]byte, error)) (*Frame, error) {
+	if marshal == nil {
+		marshal = json.Marshal
+	}
+	data, err := marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return Format(event, "", 0, data), nil
 }
 
 // Comment creates an SSE comment frame (": <comment>\n\n"), typically used for keep-alive pings.

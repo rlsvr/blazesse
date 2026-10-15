@@ -71,6 +71,45 @@ func TestFrame_FromRaw(t *testing.T) {
 	}
 }
 
+func TestFrame_JSON(t *testing.T) {
+	type payload struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+
+	p := payload{Name: "tick", Count: 10}
+
+	f, err := frame.JSON("update", p)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	expected := "event: update\ndata: {\"name\":\"tick\",\"count\":10}\n\n"
+	if f.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, f.String())
+	}
+
+	fText, err := frame.JSONText(p)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	expectedText := "data: {\"name\":\"tick\",\"count\":10}\n\n"
+	if fText.String() != expectedText {
+		t.Fatalf("expected %q, got %q", expectedText, fText.String())
+	}
+
+	// Custom marshaler
+	fCustom, err := frame.JSONWith("custom", p, func(v any) ([]byte, error) {
+		return []byte(`{"custom":true}`), nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	expectedCustom := "event: custom\ndata: {\"custom\":true}\n\n"
+	if fCustom.String() != expectedCustom {
+		t.Fatalf("expected %q, got %q", expectedCustom, fCustom.String())
+	}
+}
+
 func BenchmarkFrame_Text(b *testing.B) {
 	payload := `{"symbol":"BTC-USD","price":68450.25,"volume":1420.5}`
 	b.ReportAllocs()

@@ -91,6 +91,15 @@ var (
 
 	// FromRawFrame wraps pre-formatted wire bytes.
 	FromRawFrame = frame.FromRaw
+
+	// JSONFrame formats an SSE frame with an event name and JSON-encoded payload.
+	JSONFrame = frame.JSON
+
+	// JSONTextFrame formats an SSE data frame without an event name using JSON encoding.
+	JSONTextFrame = frame.JSONText
+
+	// JSONWithFrame formats an SSE frame using a user-provided JSON marshaler function.
+	JSONWithFrame = frame.JSONWith
 )
 
 // Engine constructors
@@ -110,6 +119,7 @@ var (
 	WithShards         = broadcaster.WithShards
 	WithWriteTimeout   = broadcaster.WithWriteTimeout
 	WithHeartbeat      = broadcaster.WithHeartbeat
+	WithPingComment    = broadcaster.WithPingComment
 	WithDeliveryMode   = broadcaster.WithDeliveryMode
 	WithFIFOBufferSize = broadcaster.WithFIFOBufferSize
 	WithOverflowPolicy = broadcaster.WithOverflowPolicy

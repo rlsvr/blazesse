@@ -42,6 +42,7 @@ type Options struct {
 	WriteTimeout   time.Duration
 	PingInterval   time.Duration
 	PingJitter     time.Duration
+	PingComment    string
 	DeliveryMode   DeliveryMode
 	FIFOBufferSize int
 	OverflowPolicy OverflowPolicy
@@ -61,6 +62,7 @@ func DefaultOptions() Options {
 		WriteTimeout:   3 * time.Second,
 		PingInterval:   20 * time.Second,
 		PingJitter:     10 * time.Second,
+		PingComment:    "ping",
 		DeliveryMode:   DeliveryConflated,
 		FIFOBufferSize: 512,
 		OverflowPolicy: OverflowDropOldest,
@@ -107,6 +109,15 @@ func WithHeartbeat(interval, jitter time.Duration) Option {
 			o.PingInterval = interval
 		}
 		o.PingJitter = jitter
+	}
+}
+
+// WithPingComment sets the SSE comment string used for keep-alive heartbeats.
+// Defaults to "ping" (which formats as ": ping\n\n"). If set to an empty string,
+// it formats as a bare comment (":\n\n").
+func WithPingComment(comment string) Option {
+	return func(o *Options) {
+		o.PingComment = comment
 	}
 }
 

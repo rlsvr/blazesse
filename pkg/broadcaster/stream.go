@@ -32,6 +32,7 @@ type Stream struct {
 	closed  atomic.Bool
 	done    chan struct{}
 	lastAct atomic.Int64 // timestamp of last write to prevent redundant keep-alives
+	pingRaw []byte
 }
 
 // Upgrade initializes an HTTP connection for Server-Sent Events streaming.
@@ -72,14 +73,25 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...Option) (*Stream, e
 		}
 	}
 
+	var pingBytes []byte
+	switch options.PingComment {
+	case "ping":
+		pingBytes = frame.Ping().Raw()
+	case "":
+		pingBytes = []byte(":\n\n")
+	default:
+		pingBytes = frame.Comment(options.PingComment).Raw()
+	}
+
 	ctx, cancel := context.WithCancel(r.Context())
 	s := &Stream{
-		w:      w,
-		rc:     rc,
-		ctx:    ctx,
-		cancel: cancel,
-		opts:   options,
-		done:   make(chan struct{}),
+		w:       w,
+		rc:      rc,
+		ctx:     ctx,
+		cancel:  cancel,
+		opts:    options,
+		done:    make(chan struct{}),
+		pingRaw: pingBytes,
 	}
 	s.lastAct.Store(time.Now().UnixNano())
 
@@ -223,7 +235,7 @@ func (s *Stream) heartbeatLoop() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	ping := frame.Ping().Raw()
+	ping := s.pingRaw
 
 	for {
 		select {
