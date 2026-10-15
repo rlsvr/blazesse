@@ -37,6 +37,7 @@ type ConflatingSubscriber struct {
 	closeOnce sync.Once
 	closed    atomic.Bool
 	metrics   MetricsCollector
+	buf       [1]*frame.Frame // reusable slice backing buffer for zero-alloc Fetch()
 }
 
 // NewConflatingSubscriber creates a ConflatingSubscriber.
@@ -81,12 +82,13 @@ func (s *ConflatingSubscriber) Done() <-chan struct{} {
 
 func (s *ConflatingSubscriber) Fetch() []*frame.Frame {
 	// Atomically retrieve the frame and set the pointer back to nil.
-	// This immediately frees the reference so the GC can reclaim the Frame.
+	// Reuses s.buf[:1] to achieve zero-allocations per delivery.
 	f := s.latest.Swap(nil)
 	if f == nil {
 		return nil
 	}
-	return []*frame.Frame{f}
+	s.buf[0] = f
+	return s.buf[:1]
 }
 
 func (s *ConflatingSubscriber) Close() {
@@ -114,6 +116,7 @@ type FIFOSubscriber struct {
 	policy    OverflowPolicy
 	closed    atomic.Bool
 	metrics   MetricsCollector
+	buf       []*frame.Frame
 }
 
 // NewFIFOSubscriber creates a FIFOSubscriber with bounded queue capacity and overflow policy.
@@ -124,12 +127,17 @@ func NewFIFOSubscriber(capacity int, policy OverflowPolicy, metrics MetricsColle
 	if metrics == nil {
 		metrics = NoopMetrics{}
 	}
+	initBufCap := 32
+	if capacity < initBufCap {
+		initBufCap = capacity
+	}
 	return &FIFOSubscriber{
 		q:       queue.New[*frame.Frame](capacity),
 		notify:  make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		policy:  policy,
 		metrics: metrics,
+		buf:     make([]*frame.Frame, 0, initBufCap),
 	}
 }
 
@@ -184,13 +192,16 @@ func (s *FIFOSubscriber) Done() <-chan struct{} {
 }
 
 func (s *FIFOSubscriber) Fetch() []*frame.Frame {
-	var batch []*frame.Frame
+	s.buf = s.buf[:0]
 	for {
 		select {
 		case f := <-s.q.Recv():
-			batch = append(batch, f)
+			s.buf = append(s.buf, f)
 		default:
-			return batch
+			if len(s.buf) == 0 {
+				return nil
+			}
+			return s.buf
 		}
 	}
 }

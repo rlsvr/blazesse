@@ -47,6 +47,7 @@ type Broadcaster struct {
 	handlersWg  sync.WaitGroup
 	ctx         context.Context
 	cancel      context.CancelFunc
+	replay      *replayManager
 }
 
 // New creates and initializes a Broadcaster with the provided options.
@@ -61,6 +62,10 @@ func New(opts ...Option) *Broadcaster {
 		opts:   options,
 		ctx:    ctx,
 		cancel: cancel,
+	}
+
+	if options.ReplayBufferCap > 0 {
+		b.replay = newReplayManager(options.ReplayBufferCap)
 	}
 
 	if options.Engine == EngineLockFree {
@@ -150,6 +155,10 @@ func (b *Broadcaster) SubscribeMulti(topics []string) (Subscriber, func()) {
 func (b *Broadcaster) Publish(topic string, f *frame.Frame) {
 	if f == nil || f.Len() == 0 || b.closed.Load() {
 		return
+	}
+
+	if b.replay != nil {
+		b.replay.Push(topic, f)
 	}
 
 	if n := len(b.asyncShards); n > 0 {

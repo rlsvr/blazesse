@@ -59,6 +59,11 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...Option) (*Stream, e
 		h.Set(k, v)
 	}
 
+	// Verify flush capability before committing headers
+	if !supportsFlush(w) {
+		return nil, ErrNotFlusher
+	}
+
 	w.WriteHeader(http.StatusOK)
 
 	// Commit headers immediately with a write deadline
@@ -175,6 +180,7 @@ func (s *Stream) SendBatch(frames []*frame.Frame) error {
 	_ = s.rc.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
 	for _, f := range frames {
 		if f != nil && f.Len() > 0 {
+			//nolint:gosec // raw contains pre-sanitized and validated SSE wire bytes
 			if _, err := s.w.Write(f.Raw()); err != nil {
 				_ = s.closeLocked()
 				return err
@@ -270,4 +276,21 @@ func (s *Stream) heartbeatLoop() {
 			s.mu.Unlock()
 		}
 	}
+}
+
+func supportsFlush(w http.ResponseWriter) bool {
+	if _, ok := w.(http.Flusher); ok {
+		return true
+	}
+	for {
+		if u, ok := w.(interface{ Unwrap() http.ResponseWriter }); ok {
+			w = u.Unwrap()
+			if _, ok := w.(http.Flusher); ok {
+				return true
+			}
+		} else {
+			break
+		}
+	}
+	return false
 }

@@ -77,6 +77,7 @@ type Options struct {
 	MaxTopicLen       int
 	MaxConnections    int
 	AuthorizeTopics   func(r *http.Request, topics []string) error
+	ReplayBufferCap   int
 }
 
 // DefaultOptions returns production-ready default settings.
@@ -103,6 +104,7 @@ func DefaultOptions() Options {
 		MaxTopicLen:       128,
 		MaxConnections:    0, // 0 = unlimited
 		AuthorizeTopics:   nil,
+		ReplayBufferCap:   0, // 0 = disabled
 	}
 }
 
@@ -219,11 +221,10 @@ func WithWriteTimeout(d time.Duration) Option {
 
 // WithHeartbeat sets the base keep-alive ping interval and maximum random jitter.
 // Jitter randomizes ping ticks per connection to prevent thundering herds on the Go timer heap.
+// Setting interval <= 0 disables keep-alive heartbeats completely.
 func WithHeartbeat(interval, jitter time.Duration) Option {
 	return func(o *Options) {
-		if interval > 0 {
-			o.PingInterval = interval
-		}
+		o.PingInterval = interval
 		o.PingJitter = jitter
 	}
 }
@@ -347,5 +348,16 @@ func WithMaxConnections(limit int) Option {
 func WithAuthorizeTopics(fn func(r *http.Request, topics []string) error) Option {
 	return func(o *Options) {
 		o.AuthorizeTopics = fn
+	}
+}
+
+// WithReplayBuffer configures an in-memory ring buffer per topic to support seamless
+// reconnection and message recovery via the standard HTTP 'Last-Event-ID' header.
+// Defaults to 0 (disabled).
+func WithReplayBuffer(topicCap int) Option {
+	return func(o *Options) {
+		if topicCap > 0 {
+			o.ReplayBufferCap = topicCap
+		}
 	}
 }

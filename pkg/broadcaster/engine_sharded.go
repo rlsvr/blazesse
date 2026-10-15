@@ -94,12 +94,16 @@ func (e *shardedMutexEngine) publish(topic string, f *frame.Frame) {
 }
 
 func (e *shardedMutexEngine) publishAll(f *frame.Frame) {
+	seen := make(map[Subscriber]struct{})
 	for i := range e.shards {
 		s := &e.shards[i]
 		s.mu.RLock()
 		for _, subs := range s.topics {
 			for client := range subs {
-				client.Push(f)
+				if _, ok := seen[client]; !ok {
+					seen[client] = struct{}{}
+					client.Push(f)
+				}
 			}
 		}
 		s.mu.RUnlock()

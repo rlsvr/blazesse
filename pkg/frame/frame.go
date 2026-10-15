@@ -16,6 +16,15 @@ import (
 // Frame represents a pre-serialized, immutable SSE wire payload (e.g. "event: ...\ndata: ...\n\n").
 type Frame struct {
 	raw []byte
+	id  string
+}
+
+// ID returns the SSE event ID of the frame, if one was provided during Format.
+func (f *Frame) ID() string {
+	if f == nil {
+		return ""
+	}
+	return f.id
 }
 
 // Raw returns the underlying wire-formatted bytes. Callers must treat this slice as read-only.
@@ -168,7 +177,7 @@ func Format(event, id string, retry time.Duration, data []byte) *Frame {
 	writeData(&buf, data)
 	buf.WriteByte('\n')
 
-	return &Frame{raw: buf.Bytes()}
+	return &Frame{raw: buf.Bytes(), id: id}
 }
 
 func writeData(buf *bytes.Buffer, data []byte) {

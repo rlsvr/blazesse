@@ -263,3 +263,7 @@ func WithMaxConnections(limit int) Option {
 func WithAuthorizeTopics(fn func(r *http.Request, topics []string) error) Option {
 	return broadcaster.WithAuthorizeTopics(fn)
 }
+
+func WithReplayBuffer(topicCap int) Option {
+	return broadcaster.WithReplayBuffer(topicCap)
+}

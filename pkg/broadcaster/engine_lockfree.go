@@ -190,7 +190,7 @@ func (e *lockFreeEngine) runReconfigActor() {
 
 		case req := <-e.reconfigCh:
 			batch = append(batch, req)
-			if len(batch) >= batchCap {
+			if len(batch) >= batchCap || req.done != nil {
 				e.applyReconfigBatch(batch)
 				batch = batch[:0]
 				if !timer.Stop() {
@@ -260,13 +260,15 @@ func (e *lockFreeEngine) applyReconfigBatch(batch []reconfigReq) {
 				}
 			}
 		}
+	}
 
+	e.currentSnap.Store(&topicSnapshot{topics: nextTopics})
+
+	for _, req := range batch {
 		if req.done != nil {
 			close(req.done)
 		}
 	}
-
-	e.currentSnap.Store(&topicSnapshot{topics: nextTopics})
 }
 
 func (e *lockFreeEngine) close() {
