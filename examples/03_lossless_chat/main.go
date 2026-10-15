@@ -25,6 +25,10 @@ func main() {
 
 	// Send message endpoint: curl -X POST 'http://localhost:8082/send?topic=general&user=alice&msg=hello'
 	http.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		topic := r.URL.Query().Get("topic")
 		user := r.URL.Query().Get("user")
 		msg := r.URL.Query().Get("msg")

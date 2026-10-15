@@ -104,4 +104,36 @@ func TestFIFOSubscriber_OverflowDisconnect(t *testing.T) {
 	if !sub.IsClosed() {
 		t.Fatal("expected subscriber to be closed after overflow disconnect")
 	}
+
+	select {
+	case <-sub.Done():
+		// Successfully signaled
+	default:
+		t.Fatal("expected subscriber Done() channel to be closed on overflow disconnect")
+	}
+}
+
+func TestFIFOSubscriber_OverflowDisconnect_WakesDrainingReader(t *testing.T) {
+	s := broadcaster.NewFIFOSubscriber(2, broadcaster.OverflowDisconnect, nil)
+	f := frame.Text("x")
+	for i := 0; i < 5; i++ {
+		s.Push(f)
+	}
+	if !s.IsClosed() {
+		t.Fatal("expected closed")
+	}
+
+	<-s.Recv()
+	if b := s.Fetch(); len(b) == 0 {
+		t.Fatal("expected buffered frames")
+	}
+
+	select {
+	case <-s.Done():
+		// reader woken on disconnect via Done
+	case <-s.Recv():
+		// reader woken on disconnect via notify
+	default:
+		t.Fatal("subscriber closed by OverflowDisconnect but neither Recv() nor Done() signaled")
+	}
 }

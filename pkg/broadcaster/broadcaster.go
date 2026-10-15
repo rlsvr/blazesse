@@ -200,13 +200,12 @@ func (b *Broadcaster) Close() error {
 	if b.closed.Swap(true) {
 		return nil
 	}
-	b.cancel()
-
-	// Drain and wait for async shards
+	// Drain and wait for async shards before canceling context
 	for _, s := range b.asyncShards {
 		s.q.Close()
 	}
 	b.asyncWg.Wait()
+	b.cancel()
 
 	// Close engine and all subscriber mailboxes
 	b.engine.close()

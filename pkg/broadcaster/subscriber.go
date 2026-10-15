@@ -167,12 +167,14 @@ func (s *FIFOSubscriber) Push(f *frame.Frame) bool {
 		case <-s.q.Recv():
 		default:
 		}
-		_ = s.q.TryPush(f)
-		select {
-		case s.notify <- struct{}{}:
-		default:
+		if s.q.TryPush(f) {
+			select {
+			case s.notify <- struct{}{}:
+			default:
+			}
+			return true
 		}
-		return true
+		return false
 
 	case OverflowDisconnect:
 		s.Close()

@@ -223,3 +223,44 @@ func TestFacade_EngineShardedMutex(t *testing.T) {
 		t.Fatalf("unexpected batch: %v", batch)
 	}
 }
+
+func TestLockFree_NoSubscribeGap(t *testing.T) {
+	b := broadcaster.New(broadcaster.NewEngineLockFree(), broadcaster.WithDeliveryMode(broadcaster.DeliveryFIFO))
+	defer func() { _ = b.Close() }()
+
+	sub, unsub := b.Subscribe("room")
+	defer unsub()
+
+	b.Publish("room", frame.Text("welcome"))
+	select {
+	case <-sub.Recv():
+		b := sub.Fetch()
+		if len(b) == 0 || b[0].String() != "data: welcome\n\n" {
+			t.Fatalf("unexpected message payload: %v", b)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("frame published after Subscribe() returned was dropped")
+	}
+}
+
+func TestLockFree_ReconfigWaitHangOnClose(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		b := broadcaster.New(broadcaster.NewEngineLockFree(broadcaster.WithReconfigWait(true), broadcaster.WithReconfigInterval(50*time.Millisecond)))
+		var wg sync.WaitGroup
+		done := make(chan struct{})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, u := b.Subscribe("x")
+			u()
+			close(done)
+		}()
+		time.Sleep(time.Millisecond)
+		_ = b.Close()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("iteration %d: Subscribe hung after Close with ReconfigWait=true", i)
+		}
+	}
+}

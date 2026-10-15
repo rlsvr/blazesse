@@ -31,7 +31,7 @@ func handleLLMChat(w http.ResponseWriter, r *http.Request) {
 		blazesse.WithHeader("Access-Control-Allow-Origin", "*"),
 	)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "stream upgrade failed", http.StatusInternalServerError)
 		return
 	}
 	defer func() { _ = stream.Close() }()

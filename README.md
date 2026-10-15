@@ -100,7 +100,7 @@ go get github.com/rlsvr/blazesse
 
 For the Echo web framework adapter:
 ```bash
-go get github.com/rlsvr/blazesse/pkg/adapter/echo
+go get github.com/rlsvr/blazesse-echo
 ```
 
 ---
@@ -194,7 +194,7 @@ curl -N "http://localhost:8080/tickers?topics=crypto.BTC,crypto.ETH"
 ---
 
 ### 3. Labstack Echo Framework Integration
-Integrate cleanly with [Echo](https://github.com/labstack/echo) using `pkg/adapter/echo`:
+Integrate cleanly with [Echo](https://github.com/labstack/echo) using [`blazesse-echo`](https://github.com/rlsvr/blazesse-echo):
 
 ```go
 package main
@@ -202,7 +202,7 @@ package main
 import (
 	"github.com/labstack/echo/v4"
 	"github.com/rlsvr/blazesse"
-	blazesseEcho "github.com/rlsvr/blazesse/pkg/adapter/echo"
+	blazesseEcho "github.com/rlsvr/blazesse-echo"
 )
 
 func main() {
