@@ -58,6 +58,8 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...Option) (*Stream, e
 		h.Set(k, v)
 	}
 
+	w.WriteHeader(http.StatusOK)
+
 	// Commit headers immediately with a write deadline
 	_ = rc.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
 	if err := rc.Flush(); err != nil {
