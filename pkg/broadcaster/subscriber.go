@@ -28,34 +28,24 @@ type Subscriber interface {
 	IsClosed() bool
 }
 
-func hashTopic64(s string) uint64 {
-	const offset64 = 14695981039346656037
-	const prime64 = 1099511628211
-	var h uint64 = offset64
-	for i := 0; i < len(s); i++ {
-		h ^= uint64(s[i])
-		h *= prime64
-	}
-	return h
-}
-
 // ConflatingSubscriber implements a lock-free, zero-allocation mailbox for high-frequency updates.
 // For single-topic subscriptions, it uses an atomic pointer swap.
 // For multi-topic subscriptions, it maintains independent per-topic slots so updates on
 // topicB never overwrite unread state from topicA.
 type ConflatingSubscriber struct {
-	latest          atomic.Pointer[frame.Frame] // single-topic fast path
-	singleTopicHash atomic.Uint64
-	hasMultiple     atomic.Bool
-	slotsMu         sync.RWMutex
-	slots           map[string]*atomic.Pointer[frame.Frame] // per-topic latest state slots
-	notify          chan struct{}                           // size 1: coalesces rapid updates into 1 wakeup
-	done            chan struct{}                           // closed when mailbox is closed
-	closeOnce       sync.Once
-	closed          atomic.Bool
-	metrics         MetricsCollector
-	singleBuf       [1]*frame.Frame // zero-allocation backing array for single topic
-	multiBuf        []*frame.Frame  // reusable slice for multi topic
+	latest      atomic.Pointer[frame.Frame] // single-topic fast path
+	singleTopic atomic.Pointer[string]      // initialized once for single-topic mode
+	hasMultiple atomic.Bool
+	slotsMu     sync.RWMutex
+	slots       map[string]*atomic.Pointer[frame.Frame] // per-topic latest state slots
+	topicOrder  []string                                // deterministic iteration order for multi-topic
+	notify      chan struct{}                           // size 1: coalesces rapid updates into 1 wakeup
+	done        chan struct{}                           // closed when mailbox is closed
+	closeOnce   sync.Once
+	closed      atomic.Bool
+	metrics     MetricsCollector
+	singleBuf   [1]*frame.Frame // zero-allocation backing array for single topic
+	multiBuf    []*frame.Frame  // reusable slice for multi topic
 }
 
 // NewConflatingSubscriber creates a ConflatingSubscriber.
@@ -72,12 +62,17 @@ func NewConflatingSubscriber(metrics MetricsCollector, topics ...string) *Confla
 	if len(topics) > 1 {
 		s.hasMultiple.Store(true)
 		s.slots = make(map[string]*atomic.Pointer[frame.Frame], len(topics))
+		s.topicOrder = make([]string, 0, len(topics))
 		for _, t := range topics {
-			s.slots[t] = &atomic.Pointer[frame.Frame]{}
+			if _, exists := s.slots[t]; !exists {
+				s.slots[t] = &atomic.Pointer[frame.Frame]{}
+				s.topicOrder = append(s.topicOrder, t)
+			}
 		}
-		s.multiBuf = make([]*frame.Frame, 0, len(topics))
+		s.multiBuf = make([]*frame.Frame, 0, len(s.topicOrder))
 	} else if len(topics) == 1 {
-		s.singleTopicHash.Store(hashTopic64(topics[0]))
+		t := topics[0]
+		s.singleTopic.Store(&t)
 	}
 
 	return s
@@ -89,13 +84,13 @@ func (s *ConflatingSubscriber) Push(topic string, f *frame.Frame) bool {
 	}
 
 	if !s.hasMultiple.Load() {
-		h := hashTopic64(topic)
-		st := s.singleTopicHash.Load()
-		if st == 0 {
-			s.singleTopicHash.CompareAndSwap(0, h)
-			st = s.singleTopicHash.Load()
+		stPtr := s.singleTopic.Load()
+		if stPtr == nil && topic != "" && topic != "*" {
+			t := topic
+			s.singleTopic.CompareAndSwap(nil, &t)
+			stPtr = s.singleTopic.Load()
 		}
-		if st == h || topic == "" || topic == "*" {
+		if stPtr == nil || *stPtr == topic || topic == "" || topic == "*" {
 			old := s.latest.Swap(f)
 			if old != nil {
 				s.metrics.OnFrameConflated(topic)
@@ -120,6 +115,7 @@ func (s *ConflatingSubscriber) Push(topic string, f *frame.Frame) bool {
 		if !ok {
 			slot = &atomic.Pointer[frame.Frame]{}
 			s.slots[topic] = slot
+			s.topicOrder = append(s.topicOrder, topic)
 		}
 		s.slotsMu.Unlock()
 	}
@@ -140,30 +136,40 @@ func (s *ConflatingSubscriber) signal() {
 	}
 }
 
+func (s *ConflatingSubscriber) getOrCreateSlotLocked(topic string) *atomic.Pointer[frame.Frame] {
+	slot, ok := s.slots[topic]
+	if !ok {
+		slot = &atomic.Pointer[frame.Frame]{}
+		s.slots[topic] = slot
+		s.topicOrder = append(s.topicOrder, topic)
+	}
+	return slot
+}
+
 func (s *ConflatingSubscriber) promoteToMulti(topic string, f *frame.Frame) {
 	s.slotsMu.Lock()
 	defer s.slotsMu.Unlock()
 
-	if !s.hasMultiple.Load() {
-		s.slots = make(map[string]*atomic.Pointer[frame.Frame], 4)
-		prev := s.latest.Swap(nil)
-		if prev != nil {
-			prevSlot := &atomic.Pointer[frame.Frame]{}
-			prevSlot.Store(prev)
-			s.slots["_prev"] = prevSlot
-		}
-		newSlot := &atomic.Pointer[frame.Frame]{}
-		newSlot.Store(f)
-		s.slots[topic] = newSlot
-		s.hasMultiple.Store(true)
-	} else {
-		slot, ok := s.slots[topic]
-		if !ok {
-			slot = &atomic.Pointer[frame.Frame]{}
-			s.slots[topic] = slot
-		}
-		slot.Store(f)
+	if s.hasMultiple.Load() {
+		s.getOrCreateSlotLocked(topic).Store(f)
+		return
 	}
+
+	s.slots = make(map[string]*atomic.Pointer[frame.Frame], 4)
+	s.topicOrder = make([]string, 0, 4)
+
+	prevTopic := "_prev"
+	if stPtr := s.singleTopic.Load(); stPtr != nil && *stPtr != "" {
+		prevTopic = *stPtr
+	}
+
+	prev := s.latest.Swap(nil)
+	if prev != nil || prevTopic != "_prev" {
+		s.getOrCreateSlotLocked(prevTopic).Store(prev)
+	}
+
+	s.getOrCreateSlotLocked(topic).Store(f)
+	s.hasMultiple.Store(true)
 }
 
 func (s *ConflatingSubscriber) Recv() <-chan struct{} {
@@ -190,10 +196,11 @@ func (s *ConflatingSubscriber) Fetch() []*frame.Frame {
 	s.slotsMu.RLock()
 	defer s.slotsMu.RUnlock()
 
-	for _, slot := range s.slots {
-		f := slot.Swap(nil)
-		if f != nil {
-			s.multiBuf = append(s.multiBuf, f)
+	for _, t := range s.topicOrder {
+		if slot, ok := s.slots[t]; ok {
+			if f := slot.Swap(nil); f != nil {
+				s.multiBuf = append(s.multiBuf, f)
+			}
 		}
 	}
 

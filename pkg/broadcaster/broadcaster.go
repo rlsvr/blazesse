@@ -145,12 +145,21 @@ func (b *Broadcaster) SubscribeMulti(topics []string) (Subscriber, func()) {
 	b.subCount.Add(1)
 
 	var unsubOnce sync.Once
-	return sub, func() {
+	teardown := func() {
 		unsubOnce.Do(func() {
 			unsub()
 			b.subCount.Add(-1)
 		})
 	}
+
+	// Re-check closed state after engine registration to prevent race with Close()
+	if b.closed.Load() {
+		teardown()
+		sub.Close()
+		return sub, func() {}
+	}
+
+	return sub, teardown
 }
 
 // Publish fans out an immutable Frame across all subscribers of the specified topic.
@@ -185,6 +194,7 @@ func (b *Broadcaster) PublishAll(f *frame.Frame) {
 	if f == nil || f.Len() == 0 || b.closed.Load() {
 		return
 	}
+	b.opts.Metrics.OnFramePublished("*", f.Len())
 	b.engine.publishAll(f)
 }
 

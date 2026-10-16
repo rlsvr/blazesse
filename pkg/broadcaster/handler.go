@@ -53,6 +53,12 @@ func DefaultTopicExtractor(r *http.Request) ([]string, error) {
 
 // validateRequest validates client limits, topics, and authorization hooks before upgrading.
 func (b *Broadcaster) validateRequest(w http.ResponseWriter, r *http.Request) ([]string, bool) {
+	if r.Method != "" && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, false
+	}
+
 	if b.closed.Load() {
 		http.Error(w, ErrBroadcasterClosed.Error(), http.StatusServiceUnavailable)
 		return nil, false
@@ -172,6 +178,11 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.handlersWg.Add(1)
 	defer b.handlersWg.Done()
 
+	if b.closed.Load() {
+		http.Error(w, ErrBroadcasterClosed.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
 	stream, err := Upgrade(w, r, b.buildStreamOptions()...)
 	if err != nil {
 		return
@@ -197,6 +208,9 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Event loop: drain mailbox batches and write to stream
 	for {
 		select {
+		case <-b.ctx.Done():
+			return
+
 		case <-stream.Done():
 			return
 
@@ -226,19 +240,21 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Deduplicate any overlapping frames that were already transmitted during replayHistory
+			// Deduplicate any overlapping frames that raced into the mailbox during replayHistory
 			if len(replayedIDs) > 0 {
 				filtered := batch[:0]
 				for _, f := range batch {
 					if id := f.ID(); id != "" {
 						if _, dup := replayedIDs[id]; dup {
-							delete(replayedIDs, id)
 							continue
 						}
 					}
 					filtered = append(filtered, f)
 				}
 				batch = filtered
+				// Any frames that raced between SubscribeMulti and replayHistory were already in the mailbox;
+				// release the deduplication map after draining the initial overlap batch.
+				replayedIDs = nil
 				if len(batch) == 0 {
 					continue
 				}

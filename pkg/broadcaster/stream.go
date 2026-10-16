@@ -67,7 +67,9 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts ...Option) (*Stream, e
 	w.WriteHeader(http.StatusOK)
 
 	// Commit headers immediately with a write deadline
-	_ = rc.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
+	if options.WriteTimeout > 0 {
+		_ = rc.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
+	}
 	if err := rc.Flush(); err != nil {
 		if !errors.Is(err, http.ErrNotSupported) {
 			return nil, err
@@ -131,7 +133,9 @@ func (s *Stream) Send(f *frame.Frame) error {
 		return ErrStreamClosed
 	}
 
-	_ = s.rc.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
+	if s.opts.WriteTimeout > 0 {
+		_ = s.rc.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
+	}
 	if _, err := s.w.Write(f.Raw()); err != nil {
 		_ = s.closeLocked()
 		return err
@@ -177,7 +181,9 @@ func (s *Stream) SendBatch(frames []*frame.Frame) error {
 		return ErrStreamClosed
 	}
 
-	_ = s.rc.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
+	if s.opts.WriteTimeout > 0 {
+		_ = s.rc.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
+	}
 	for _, f := range frames {
 		if f != nil && f.Len() > 0 {
 			//nolint:gosec // raw contains pre-sanitized and validated SSE wire bytes
@@ -262,7 +268,9 @@ func (s *Stream) heartbeatLoop() {
 				return
 			}
 
-			_ = s.rc.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
+			if s.opts.WriteTimeout > 0 {
+				_ = s.rc.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
+			}
 			_, wErr := s.w.Write(ping)
 			fErr := s.rc.Flush()
 

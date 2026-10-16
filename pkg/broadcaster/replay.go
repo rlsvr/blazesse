@@ -108,7 +108,9 @@ func (r *topicReplayRing) ReplayAfter(lastID string) []*frame.Frame {
 type replayManager struct {
 	mu         sync.RWMutex
 	topics     map[string]*topicReplayRing
-	topicOrder []string // FIFO tracker for evicting oldest topic when maxTopics exceeded
+	topicOrder []string // fixed-cap circular ring for evicting oldest topic when maxTopics exceeded
+	orderStart int
+	orderCount int
 	topicCap   int
 	missPolicy ReplayMissPolicy
 	maxTopics  int
@@ -140,22 +142,34 @@ func (m *replayManager) Push(topic string, f *frame.Frame) {
 
 	if !ok {
 		m.mu.Lock()
-		ring, ok = m.topics[topic]
-		if !ok {
-			// Evict oldest topic ring if maxTopics limit reached
-			if len(m.topics) >= m.maxTopics && len(m.topicOrder) > 0 {
-				oldest := m.topicOrder[0]
-				m.topicOrder = m.topicOrder[1:]
-				delete(m.topics, oldest)
-			}
-			ring = newTopicReplayRing(m.topicCap, m.missPolicy)
-			m.topics[topic] = ring
-			m.topicOrder = append(m.topicOrder, topic)
-		}
+		ring = m.getOrCreateRingLocked(topic)
 		m.mu.Unlock()
 	}
 
 	ring.Push(f)
+}
+
+func (m *replayManager) getOrCreateRingLocked(topic string) *topicReplayRing {
+	if ring, ok := m.topics[topic]; ok {
+		return ring
+	}
+	ring := newTopicReplayRing(m.topicCap, m.missPolicy)
+	if m.orderCount < m.maxTopics {
+		if len(m.topicOrder) < m.maxTopics {
+			m.topicOrder = append(m.topicOrder, topic)
+		} else {
+			idx := (m.orderStart + m.orderCount) % m.maxTopics
+			m.topicOrder[idx] = topic
+		}
+		m.orderCount++
+	} else {
+		oldest := m.topicOrder[m.orderStart]
+		delete(m.topics, oldest)
+		m.topicOrder[m.orderStart] = topic
+		m.orderStart = (m.orderStart + 1) % m.maxTopics
+	}
+	m.topics[topic] = ring
+	return ring
 }
 
 func (m *replayManager) ReplayAfter(topic, lastID string) []*frame.Frame {

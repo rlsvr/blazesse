@@ -347,6 +347,9 @@ b := blazesse.NewBroadcaster(
 | `WithMaxTopicLen(limit int)` | Maximum character length for topic strings | `128` |
 | `WithMaxConnections(limit int)` | Maximum concurrent connections allowed (429 when saturated) | `0` (unlimited) |
 | `WithAuthorizeTopics(fn func(r, topics))` | Topic-aware pre-connection authorization hook (403 on error) | `nil` |
+| `WithReplayBuffer(topicCap int)` | Historical event replay ring buffer capacity per topic (`Last-Event-ID`) | `0` (disabled) |
+| `WithReplayMissPolicy(policy)` | Behavior when `Last-Event-ID` is not found (`ReplayMissAll` or `ReplayMissNone`) | `ReplayMissAll` |
+| `WithReplayMaxTopics(maxTopics int)` | Maximum unique topics retained in replay memory | `10000` |
 | `WithMetrics(m MetricsCollector)` | Metrics hook (Prometheus/custom counters) | `NoopMetrics` |
 
 ---
