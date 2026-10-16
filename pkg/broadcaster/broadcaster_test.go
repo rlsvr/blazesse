@@ -317,3 +317,53 @@ func TestReplay_TopicEvictionRing(t *testing.T) {
 		t.Fatalf("expected replayed id: 2, got %q", line)
 	}
 }
+
+func TestConflatingSubscriber_PublishAllDoesNotOverwriteTopic(t *testing.T) {
+	b := broadcaster.New(broadcaster.WithDeliveryMode(broadcaster.DeliveryConflated))
+	defer func() { _ = b.Close() }()
+
+	sub, unsub := b.Subscribe("crypto.BTC")
+	defer unsub()
+
+	b.Publish("crypto.BTC", frame.Text("btc-68000"))
+	b.PublishAll(frame.Text("system-maintenance"))
+	b.Publish("crypto.BTC", frame.Text("btc-68100"))
+
+	batch := sub.Fetch()
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 frames (latest BTC tick + PublishAll alert), got %d: %v", len(batch), batch)
+	}
+	if batch[0].String() != "data: btc-68100\n\n" || batch[1].String() != "data: system-maintenance\n\n" {
+		t.Fatalf("unexpected batch frames: %v, %v", batch[0].String(), batch[1].String())
+	}
+}
+
+func TestSubscribeMulti_DeduplicatesAndStripsEmptyTopics(t *testing.T) {
+	metrics := broadcaster.NewCounterMetrics()
+	b := broadcaster.New(broadcaster.WithMetrics(metrics))
+	defer func() { _ = b.Close() }()
+
+	sub, unsub := b.SubscribeMulti([]string{"  btc ", "btc", "", "   "})
+	if metrics.ConnectedClients.Load() != 1 {
+		t.Fatalf("expected ConnectedClients == 1 for deduplicated topic, got %d", metrics.ConnectedClients.Load())
+	}
+
+	b.Publish("btc", frame.Text("tick-1"))
+	batch := sub.Fetch()
+	if len(batch) != 1 || batch[0].String() != "data: tick-1\n\n" {
+		t.Fatalf("unexpected batch: %v", batch)
+	}
+
+	unsub()
+	if metrics.ConnectedClients.Load() != 0 {
+		t.Fatalf("expected ConnectedClients == 0 after unsub, got %d", metrics.ConnectedClients.Load())
+	}
+}
+
+func TestWithWriteTimeoutZero_OptionApplied(t *testing.T) {
+	opts := broadcaster.DefaultOptions()
+	broadcaster.WithWriteTimeout(0)(&opts)
+	if opts.WriteTimeout != 0 {
+		t.Fatalf("expected WriteTimeout == 0, got %v", opts.WriteTimeout)
+	}
+}

@@ -51,6 +51,44 @@ func DefaultTopicExtractor(r *http.Request) ([]string, error) {
 	return topics, nil
 }
 
+// normalizeTopics trims whitespace, strips empty strings, and deduplicates topics while preserving order.
+func normalizeTopics(topics []string) []string {
+	if len(topics) == 0 {
+		return nil
+	}
+	if len(topics) == 1 {
+		t := strings.TrimSpace(topics[0])
+		if t == "" {
+			return nil
+		}
+		if t == topics[0] {
+			return topics
+		}
+		return []string{t}
+	}
+	out := make([]string, 0, len(topics))
+	for _, raw := range topics {
+		t := strings.TrimSpace(raw)
+		if t == "" {
+			continue
+		}
+		dup := false
+		for _, existing := range out {
+			if existing == t {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // validateRequest validates client limits, topics, and authorization hooks before upgrading.
 func (b *Broadcaster) validateRequest(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 	if r.Method != "" && r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -81,9 +119,10 @@ func (b *Broadcaster) validateRequest(w http.ResponseWriter, r *http.Request) ([
 		}
 	}
 
-	// Extract topics from request
-	topics, err := b.opts.TopicExtractor(r)
-	if err != nil {
+	// Extract and normalize topics from request
+	rawTopics, err := b.opts.TopicExtractor(r)
+	topics := normalizeTopics(rawTopics)
+	if err != nil || len(topics) == 0 {
 		releaseConn()
 		http.Error(w, "bad request: missing topic", http.StatusBadRequest)
 		return nil, false
@@ -229,6 +268,7 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				finalBatch = filtered
 			}
 			_ = stream.SendBatch(finalBatch)
+			clear(finalBatch)
 			return
 
 		case <-sub.Recv():
@@ -261,7 +301,9 @@ func (b *Broadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Single flush syscall for all batched frames
-			if err := stream.SendBatch(batch); err != nil {
+			err := stream.SendBatch(batch)
+			clear(batch)
+			if err != nil {
 				if len(topics) > 0 {
 					b.opts.Metrics.OnWriteTimeout(topics[0])
 				}

@@ -85,12 +85,12 @@ func (s *ConflatingSubscriber) Push(topic string, f *frame.Frame) bool {
 
 	if !s.hasMultiple.Load() {
 		stPtr := s.singleTopic.Load()
-		if stPtr == nil && topic != "" && topic != "*" {
+		if stPtr == nil && topic != "" {
 			t := topic
 			s.singleTopic.CompareAndSwap(nil, &t)
 			stPtr = s.singleTopic.Load()
 		}
-		if stPtr == nil || *stPtr == topic || topic == "" || topic == "*" {
+		if stPtr == nil || *stPtr == topic || topic == "" {
 			old := s.latest.Swap(f)
 			if old != nil {
 				s.metrics.OnFrameConflated(topic)
@@ -111,12 +111,7 @@ func (s *ConflatingSubscriber) Push(topic string, f *frame.Frame) bool {
 
 	if !ok {
 		s.slotsMu.Lock()
-		slot, ok = s.slots[topic]
-		if !ok {
-			slot = &atomic.Pointer[frame.Frame]{}
-			s.slots[topic] = slot
-			s.topicOrder = append(s.topicOrder, topic)
-		}
+		slot = s.getOrCreateSlotLocked(topic)
 		s.slotsMu.Unlock()
 	}
 
@@ -186,12 +181,14 @@ func (s *ConflatingSubscriber) Fetch() []*frame.Frame {
 	if !s.hasMultiple.Load() {
 		f := s.latest.Swap(nil)
 		if f == nil {
+			s.singleBuf[0] = nil
 			return nil
 		}
 		s.singleBuf[0] = f
 		return s.singleBuf[:1]
 	}
 
+	clear(s.multiBuf)
 	s.multiBuf = s.multiBuf[:0]
 	s.slotsMu.RLock()
 	defer s.slotsMu.RUnlock()
@@ -323,6 +320,7 @@ func (s *FIFOSubscriber) Done() <-chan struct{} {
 }
 
 func (s *FIFOSubscriber) Fetch() []*frame.Frame {
+	clear(s.buf)
 	s.buf = s.buf[:0]
 	for {
 		select {

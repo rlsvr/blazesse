@@ -135,8 +135,9 @@ func (b *Broadcaster) Subscribe(topic string) (Subscriber, func()) {
 
 // SubscribeMulti subscribes a new client to multiple topics across shards.
 func (b *Broadcaster) SubscribeMulti(topics []string) (Subscriber, func()) {
+	topics = normalizeTopics(topics)
 	sub := b.NewSubscriber(topics...)
-	if b.closed.Load() {
+	if b.closed.Load() || len(topics) == 0 {
 		sub.Close()
 		return sub, func() {}
 	}

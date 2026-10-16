@@ -229,9 +229,10 @@ func WithShards(n int) Option {
 
 // WithWriteTimeout sets the maximum duration allowed for a single message write and flush.
 // If a client's TCP receive window is stalled longer than this timeout, the client is evicted.
+// Setting d == 0 disables per-write deadlines.
 func WithWriteTimeout(d time.Duration) Option {
 	return func(o *Options) {
-		if d > 0 {
+		if d >= 0 {
 			o.WriteTimeout = d
 		}
 	}
