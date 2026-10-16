@@ -39,7 +39,7 @@ func (e *shardedMutexEngine) getShard(topic string) *shard {
 	return &e.shards[hashTopic(topic)&e.shardMask]
 }
 
-func (e *shardedMutexEngine) subscribe(topics []string, sub Subscriber) func() {
+func (e *shardedMutexEngine) subscribe(sub Subscriber, topics ...string) func() {
 	for _, topic := range topics {
 		if topic == "" {
 			continue

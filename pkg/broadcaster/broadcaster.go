@@ -29,7 +29,7 @@ type asyncShard struct {
 
 // engine abstracts internal topic subscription storage and lookup strategies.
 type engine interface {
-	subscribe(topics []string, sub Subscriber) func()
+	subscribe(sub Subscriber, topics ...string) func()
 	publish(topic string, f *frame.Frame)
 	publishAll(f *frame.Frame)
 	activeSubscribers(topic string) int
@@ -142,7 +142,7 @@ func (b *Broadcaster) SubscribeMulti(topics []string) (Subscriber, func()) {
 		return sub, func() {}
 	}
 
-	unsub := b.engine.subscribe(topics, sub)
+	unsub := b.engine.subscribe(sub, topics...)
 	b.subCount.Add(1)
 
 	var unsubOnce sync.Once

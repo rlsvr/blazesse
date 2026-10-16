@@ -1,4 +1,2 @@
-github.com/rlsvr/inas v0.0.0-20261015133457-2adcd58f8062 h1:7gpbRhhfNTStITP420PHzoBTBnf2+JtNjWhQA4HtCO4=
-github.com/rlsvr/inas v0.0.0-20261015133457-2adcd58f8062/go.mod h1:AWDKbq2YqfICn7e5xDcYkZDXjdXowzDcR5XNSEnem3w=
 go.uber.org/mock v0.6.0 h1:hyF9dfmbgIX5EfOdasqLsWD6xqpNZlXblLB/Dbnwv3Y=
 go.uber.org/mock v0.6.0/go.mod h1:KiVJ4BqZJaMj4svdfmHM0AUx4NJYO8ZNpPnZn1Z+BBU=

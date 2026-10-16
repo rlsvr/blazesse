@@ -14,7 +14,7 @@ import (
 // eliminating writer lock contention and fan-out pauses.
 type lockFreeEngine struct {
 	opts Options
-	reg  *registry.Registry[string, Subscriber]
+	reg  *registry.Registry[Subscriber, string]
 }
 
 func newLockFreeEngine(ctx context.Context, opts Options) *lockFreeEngine {
@@ -34,7 +34,7 @@ func newLockFreeEngine(ctx context.Context, opts Options) *lockFreeEngine {
 		QueueCapacity:     4096,
 	}
 
-	hooks := registry.Hooks[string, Subscriber]{
+	hooks := registry.Hooks[Subscriber, string]{
 		OnRegister: func(topic string, _ Subscriber) {
 			opts.Metrics.OnClientConnected(topic)
 		},
@@ -49,7 +49,7 @@ func newLockFreeEngine(ctx context.Context, opts Options) *lockFreeEngine {
 	}
 }
 
-func (e *lockFreeEngine) subscribe(topics []string, sub Subscriber) func() {
+func (e *lockFreeEngine) subscribe(sub Subscriber, topics ...string) func() {
 	cleanTopics := make([]string, 0, len(topics))
 	for _, t := range topics {
 		if t != "" {
@@ -57,7 +57,13 @@ func (e *lockFreeEngine) subscribe(topics []string, sub Subscriber) func() {
 		}
 	}
 
-	unsub := e.reg.Register(cleanTopics, sub)
+	var unsub func()
+	if len(cleanTopics) == 1 {
+		unsub = e.reg.Register(sub, cleanTopics[0])
+	} else {
+		unsub = e.reg.RegisterMulti(sub, cleanTopics...)
+	}
+
 	return func() {
 		unsub()
 		sub.Close()

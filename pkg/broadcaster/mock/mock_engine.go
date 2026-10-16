@@ -92,15 +92,20 @@ func (mr *MockengineMockRecorder) publishAll(f any) *gomock.Call {
 }
 
 // subscribe mocks base method.
-func (m *Mockengine) subscribe(topics []string, sub broadcaster.Subscriber) func() {
+func (m *Mockengine) subscribe(sub broadcaster.Subscriber, topics ...string) func() {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "subscribe", topics, sub)
+	varargs := []any{sub}
+	for _, a := range topics {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "subscribe", varargs...)
 	ret0, _ := ret[0].(func())
 	return ret0
 }
 
 // subscribe indicates an expected call of subscribe.
-func (mr *MockengineMockRecorder) subscribe(topics, sub any) *gomock.Call {
+func (mr *MockengineMockRecorder) subscribe(sub any, topics ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "subscribe", reflect.TypeOf((*Mockengine)(nil).subscribe), topics, sub)
+	varargs := append([]any{sub}, topics...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "subscribe", reflect.TypeOf((*Mockengine)(nil).subscribe), varargs...)
 }
